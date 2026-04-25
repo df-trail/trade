@@ -56,6 +56,26 @@ class PipelineTests(unittest.TestCase):
         self.assertGreater(trades, 0)
         self.assertGreater(equity, 0)
 
+    def test_backtest_can_filter_recommendations(self) -> None:
+        async def run() -> int:
+            config = AppConfig()
+            guardrails = GuardrailEngine(config.guardrails)
+            broker = PaperBroker(config.guardrails.account_equity)
+            recommender = RecommendationEngine(default_strategies(), guardrails)
+            execution = ExecutionEngine(config, broker, guardrails)
+            backtest = BacktestEngine(
+                config,
+                recommender,
+                execution,
+                broker,
+                BacktestConfig(max_snapshots=20, max_hold_snapshots=4),
+                recommendation_filter=lambda _recommendation: None,
+            )
+            result = await backtest.run(create_data_provider(config))
+            return len(result.recommendations)
+
+        self.assertEqual(asyncio.run(run()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,9 +7,10 @@ from queue import Queue
 from tkinter import ttk
 
 from ztrade import __version__
+from ztrade.backtest.engine import BacktestConfig, BacktestEngine
 from ztrade.brokers.ibkr import IbkrBroker, IbkrConnectionConfig, IbkrConnectionHealth
 from ztrade.brokers.paper import PaperBroker
-from ztrade.config import AppConfig, BotMode
+from ztrade.config import AppConfig, BotMode, DataProviderKind
 from ztrade.data.factory import create_data_provider
 from ztrade.env import load_env_file
 from ztrade.execution.engine import ExecutionEngine
@@ -34,6 +35,7 @@ class SettingsRowWidgets:
     def __init__(self, row_id: int, settings: TickerTradeSettings, expanded: bool = False) -> None:
         self.row_id = row_id
         self.expanded = tk.BooleanVar(value=expanded)
+        self.backtest_enabled = tk.BooleanVar(value=settings.enabled)
         self.symbol = tk.StringVar(value=settings.normalized_symbol)
         self.enabled = tk.BooleanVar(value=settings.enabled)
         self.trade_shares = tk.BooleanVar(value=settings.trade_shares)
@@ -162,7 +164,7 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} IBKR Health Build - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} Backtest Settings Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -170,6 +172,11 @@ class DesktopApp:
         self.status_var = tk.StringVar(value=self._account_message())
         self.account_var = tk.StringVar(value=self._account_message())
         self.ibkr_status_var = tk.StringVar(value=self._ibkr_config_message())
+        self.backtest_provider_var = tk.StringVar(value=DataProviderKind.DEMO.value)
+        self.backtest_csv_path_var = tk.StringVar(value="")
+        self.backtest_snapshots_var = tk.StringVar(value="120")
+        self.backtest_max_hold_var = tk.StringVar(value="20")
+        self.backtest_status_var = tk.StringVar(value="Backtest selected Settings rows with demo or CSV replay data.")
         self._build_ui()
 
         self._stop_event = threading.Event()
@@ -206,7 +213,7 @@ class DesktopApp:
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__} IBKR Health Build", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} Backtest Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -289,7 +296,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            f"zTrade v{__version__} IBKR Health Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} Backtest Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -331,7 +338,7 @@ class DesktopApp:
         self._build_settings_tab(settings_tab)
         if not self.has_saved_settings:
             self.notebook.select(settings_tab)
-            self.status_var.set("IBKR Health Build loaded. Configure tickers, then click Save + Apply.")
+            self.status_var.set("Backtest Settings Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -432,7 +439,75 @@ class DesktopApp:
         self.settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        self._build_settings_backtest_panel(parent)
         self._render_settings_rows(self.trading_settings)
+
+    def _build_settings_backtest_panel(self, parent: ttk.Frame) -> None:
+        panel = tk.Frame(
+            parent,
+            background=self.palette["panel"],
+            highlightbackground=self.palette["line"],
+            highlightthickness=1,
+            padx=10,
+            pady=8,
+        )
+        panel.pack(fill=tk.X, padx=10, pady=(0, 10), before=self.settings_canvas)
+
+        controls = tk.Frame(panel, background=self.palette["panel"])
+        controls.pack(fill=tk.X)
+        tk.Label(
+            controls,
+            text="Backtest Settings Rows",
+            background=self.palette["panel"],
+            foreground=self.palette["text"],
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Label(controls, text="Source").pack(side=tk.LEFT)
+        source = ttk.Combobox(
+            controls,
+            textvariable=self.backtest_provider_var,
+            values=(DataProviderKind.DEMO.value, DataProviderKind.CSV_REPLAY.value),
+            state="readonly",
+            width=12,
+        )
+        source.pack(side=tk.LEFT, padx=(4, 12))
+        self._field(controls, "Snapshots", self.backtest_snapshots_var, "Maximum snapshots to replay per Settings row.").pack(side=tk.LEFT, padx=(0, 12))
+        self._field(controls, "Max hold", self.backtest_max_hold_var, "Maximum snapshots to hold a simulated position before closing.").pack(side=tk.LEFT, padx=(0, 12))
+        ttk.Button(controls, text="Backtest Checked Rows", command=self._start_settings_backtest, style="Accent.TButton").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(controls, textvariable=self.backtest_status_var, style="Subtle.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+
+        csv_row = tk.Frame(panel, background=self.palette["panel"])
+        csv_row.pack(fill=tk.X, pady=(6, 6))
+        tk.Label(csv_row, text="CSV path", background=self.palette["panel"], foreground=self.palette["muted"]).pack(side=tk.LEFT)
+        tk.Entry(csv_row, textvariable=self.backtest_csv_path_var, width=90).pack(side=tk.LEFT, padx=(8, 0), fill=tk.X, expand=True)
+
+        columns = ("symbol", "strategies", "recommendations", "fills", "trades", "win_rate", "return_pct", "pnl", "drawdown", "equity")
+        self.backtest_tree = ttk.Treeview(panel, columns=columns, show="headings", height=5)
+        headings = {
+            "symbol": "Symbol",
+            "strategies": "Strategies",
+            "recommendations": "Recs",
+            "fills": "Fills",
+            "trades": "Trades",
+            "win_rate": "Win %",
+            "return_pct": "Return %",
+            "pnl": "P/L",
+            "drawdown": "Max DD %",
+            "equity": "Equity",
+        }
+        for column in columns:
+            self.backtest_tree.heading(column, text=headings[column])
+        self.backtest_tree.column("symbol", width=90)
+        self.backtest_tree.column("strategies", width=90)
+        self.backtest_tree.column("recommendations", width=70)
+        self.backtest_tree.column("fills", width=70)
+        self.backtest_tree.column("trades", width=70)
+        self.backtest_tree.column("win_rate", width=80)
+        self.backtest_tree.column("return_pct", width=90)
+        self.backtest_tree.column("pnl", width=100)
+        self.backtest_tree.column("drawdown", width=90)
+        self.backtest_tree.column("equity", width=110)
+        self.backtest_tree.pack(fill=tk.X)
 
     def _render_settings_rows(self, settings: TradingSettings) -> None:
         for child in self.settings_frame.winfo_children():
@@ -468,6 +543,7 @@ class DesktopApp:
         toggle_button.pack(side=tk.LEFT, padx=(0, 8))
         row_widgets.toggle_button = toggle_button
         tk.Checkbutton(top, text="Enabled", variable=row_widgets.enabled, background=self.palette["panel"]).pack(side=tk.LEFT)
+        tk.Checkbutton(top, text="Backtest", variable=row_widgets.backtest_enabled, background=self.palette["panel"]).pack(side=tk.LEFT, padx=(8, 0))
         tk.Label(top, text="Ticker", background=self.palette["panel"], foreground=self.palette["text"], font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(14, 4))
         tk.Entry(top, textvariable=row_widgets.symbol, width=10).pack(side=tk.LEFT)
         tk.Label(
@@ -614,6 +690,104 @@ class DesktopApp:
         for row_widgets in self.settings_rows:
             self._set_settings_row_expanded(row_widgets, False)
         self.settings_status_var.set(f"{len(self.settings_rows)} ticker rows collapsed")
+
+    def _start_settings_backtest(self) -> None:
+        rows = [
+            row_widgets.to_settings()
+            for row_widgets in self.settings_rows
+            if row_widgets.backtest_enabled.get() and row_widgets.to_settings().normalized_symbol
+        ]
+        if not rows:
+            self.backtest_status_var.set("No Settings rows are checked for backtesting.")
+            return
+        try:
+            provider_kind = DataProviderKind(self.backtest_provider_var.get())
+        except ValueError:
+            self.backtest_status_var.set("Unsupported backtest source.")
+            return
+        csv_path = self.backtest_csv_path_var.get().strip()
+        if provider_kind == DataProviderKind.CSV_REPLAY and not csv_path:
+            self.backtest_status_var.set("CSV replay requires a CSV path.")
+            return
+        max_snapshots = max(1, _parse_int(self.backtest_snapshots_var.get(), 120))
+        max_hold = max(1, _parse_int(self.backtest_max_hold_var.get(), 20))
+        for item_id in self.backtest_tree.get_children(""):
+            self.backtest_tree.delete(item_id)
+        self.backtest_status_var.set(f"Running {len(rows)} row backtest(s)...")
+        self.status_var.set("Backtesting checked Settings rows with the current ticker/strategy limits.")
+        thread = threading.Thread(
+            target=self._run_settings_backtests,
+            args=(rows, provider_kind, csv_path, max_snapshots, max_hold),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_settings_backtests(
+        self,
+        rows: list[TickerTradeSettings],
+        provider_kind: DataProviderKind,
+        csv_path: str,
+        max_snapshots: int,
+        max_hold: int,
+    ) -> None:
+        completed = 0
+        for row in rows:
+            try:
+                result = asyncio.run(
+                    self._run_settings_backtest(row, provider_kind, csv_path, max_snapshots, max_hold)
+                )
+                report = result.report
+                values = (
+                    row.normalized_symbol,
+                    str(len(row.strategies)),
+                    str(report.total_recommendations),
+                    str(report.total_fills),
+                    str(report.closed_trades),
+                    f"{report.win_rate:.2f}",
+                    f"{report.return_pct:.3f}",
+                    f"{report.realized_pnl:.2f}",
+                    f"{report.max_drawdown_pct:.3f}",
+                    f"{report.ending_equity:.2f}",
+                )
+                self.root.after(0, lambda row_values=values: self.backtest_tree.insert("", tk.END, values=row_values))
+                completed += 1
+            except Exception as exc:  # UI boundary: display provider/path errors without killing the app.
+                message = f"{row.normalized_symbol}: {exc}"
+                self.root.after(0, lambda text=message: self.backtest_status_var.set(text))
+        self.root.after(
+            0,
+            lambda total=completed: self.backtest_status_var.set(f"Backtest complete. {total} row(s) finished."),
+        )
+
+    async def _run_settings_backtest(
+        self,
+        row: TickerTradeSettings,
+        provider_kind: DataProviderKind,
+        csv_path: str,
+        max_snapshots: int,
+        max_hold: int,
+    ) -> object:
+        config = AppConfig(
+            data_provider=provider_kind,
+            default_watchlist=(row.normalized_symbol,),
+            csv_replay_path=csv_path or None,
+            replay_delay_seconds=0.0,
+            record_market_events=False,
+        )
+        guardrails = GuardrailEngine(config.guardrails)
+        broker = PaperBroker(config.guardrails.account_equity)
+        recommender = RecommendationEngine(default_strategies(), guardrails)
+        execution = ExecutionEngine(config, broker, guardrails)
+        policy = RecommendationSettingsPolicy(TradingSettings(tickers=(row,)), config.guardrails)
+        backtest = BacktestEngine(
+            config,
+            recommender,
+            execution,
+            broker,
+            BacktestConfig(max_snapshots=max_snapshots, max_hold_snapshots=max_hold),
+            recommendation_filter=policy.apply,
+        )
+        return await backtest.run(create_data_provider(config))
 
     def _delete_settings_row(self, target: SettingsRowWidgets) -> None:
         settings = TradingSettings(

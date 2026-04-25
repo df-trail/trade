@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
 from ztrade.analytics.performance import PerformanceReport, TradeRecord, build_performance_report
@@ -42,12 +42,14 @@ class BacktestEngine:
         execution_engine: ExecutionEngine,
         paper_broker: PaperBroker,
         backtest_config: BacktestConfig | None = None,
+        recommendation_filter: Callable[[Recommendation], Recommendation | None] | None = None,
     ) -> None:
         self._config = config
         self._recommendation_engine = recommendation_engine
         self._execution_engine = execution_engine
         self._paper_broker = paper_broker
         self._backtest_config = backtest_config or BacktestConfig()
+        self._recommendation_filter = recommendation_filter
 
     def replay(self, snapshots: list[MarketSnapshot]) -> BacktestResult:
         return _run_async_replay(self.run(_ListProvider(snapshots)))
@@ -72,6 +74,10 @@ class BacktestEngine:
             closed_trades.extend(trade_records)
 
             for recommendation in self._recommendation_engine.evaluate(snapshot):
+                if self._recommendation_filter:
+                    recommendation = self._recommendation_filter(recommendation)
+                    if recommendation is None:
+                        continue
                 recommendations.append(recommendation)
                 fill = await self._execution_engine.approve(recommendation)
                 if fill is None:

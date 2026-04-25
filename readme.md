@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.4.2 IBKR Health Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.4.3 Backtest Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -255,6 +255,8 @@ If TWS shows socket port `7496`, set `IBKR_PORT=7496` locally for read-only pric
 The desktop Settings tab is the source of truth for what feeds the recommendations page.
 
 Ticker rows open as compact rollups so the page can show only enabled status, ticker, transaction count, strategy count, and major limits. Use `Expand`, `Collapse`, `Expand All`, and `Collapse All` to expose or hide the deeper transaction and strategy settings.
+
+The Settings tab also includes `Backtest Settings Rows`. Check the `Backtest` box on each ticker row you want to test, choose `demo` or `csv_replay`, set snapshot/max-hold limits, and click `Backtest Checked Rows`. The backtest runs each checked ticker setup separately and applies the same ticker, transaction, strategy, confidence, and sizing settings used by the recommendation feed.
 
 Each ticker row supports:
 
