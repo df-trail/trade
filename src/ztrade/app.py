@@ -4,21 +4,27 @@ import asyncio
 
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode
-from ztrade.data.providers import DemoDataProvider
+from ztrade.data.factory import create_data_provider
 from ztrade.execution.engine import ExecutionEngine
 from ztrade.recommendations.engine import RecommendationEngine
 from ztrade.risk.guardrails import GuardrailEngine
+from ztrade.storage.sqlite import TradingStore
 from ztrade.strategies.registry import default_strategies
 
 
 async def run_demo() -> None:
     config = AppConfig(bot_mode=BotMode.STAGE_ONLY)
+    store = TradingStore(config.database_path)
+    store.initialize()
     guardrails = GuardrailEngine(config.guardrails)
     recommender = RecommendationEngine(default_strategies(), guardrails)
-    execution = ExecutionEngine(config, PaperBroker(), guardrails)
-    provider = DemoDataProvider(config.default_watchlist)
+    broker = PaperBroker(config.guardrails.account_equity, store=store)
+    execution = ExecutionEngine(config, broker, guardrails, store=store)
+    provider = create_data_provider(config)
 
     async for snapshot in provider.stream():
+        if config.record_market_events:
+            store.record_market_snapshot(snapshot)
         for recommendation in recommender.evaluate(snapshot):
             await execution.handle_recommendation(recommendation)
             idea = recommendation.idea

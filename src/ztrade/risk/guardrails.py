@@ -89,4 +89,4 @@ class GuardrailEngine:
         unit_cost = idea.limit_price * multiplier
         if unit_cost <= 0:
             return 0
-        return max(1, int(notional_cap // unit_cost))
+        return int(notional_cap // unit_cost)

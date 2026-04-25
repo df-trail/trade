@@ -1,3 +1,3 @@
-from ztrade.backtest.engine import BacktestEngine, BacktestResult
+from ztrade.backtest.engine import BacktestConfig, BacktestEngine, BacktestResult
 
-__all__ = ["BacktestEngine", "BacktestResult"]
+__all__ = ["BacktestConfig", "BacktestEngine", "BacktestResult"]

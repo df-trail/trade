@@ -142,14 +142,18 @@ zTrade/
   readme.md
   src/ztrade/
     app.py                 # CLI demo entry point
+    cli.py                 # Command-line runner for desktop, streams, backtests, and DB summaries
     config.py              # App and guardrail settings
     models.py              # Shared typed domain objects
+    analysis/              # Shared indicators
+    analytics/             # Performance reporting
     backtest/              # Historical replay engine
     brokers/               # Paper and future live broker adapters
     data/                  # Feed abstractions and demo feed
     execution/             # Bot mode and order-routing decisions
     recommendations/       # Strategy orchestration and scoring
     risk/                  # Guardrail checks
+    storage/               # SQLite audit log and paper ledger persistence
     strategies/            # Strategy plugins
     ui/                    # Desktop UI
 ```
@@ -160,40 +164,111 @@ The scaffold includes:
 
 - Event-driven market/news feed abstractions.
 - Demo feed that emits stock quote, option quote, and news events.
-- Strategy registry with starter momentum/news strategies.
+- CSV replay feed for historical OHLCV files.
+- Credential-ready adapters for Polygon/Massive stock snapshots, Finnhub company news, and Tradier option chains.
+- SQLite audit store for market events, recommendations, orders, fills, account snapshots, and paper positions.
+- Strategy registry with news momentum, relative-volume breakout, VWAP reclaim, RSI mean reversion, and options-flow momentum.
 - Recommendation engine with simple scoring and TA summaries.
 - Guardrail engine with PDT, sizing, liquidity, confidence, and bot-safety checks.
-- Paper broker with guaranteed fills for accepted paper orders.
+- Paper broker with guaranteed fills for accepted paper orders plus cash and position tracking.
 - Execution engine supporting staged and auto-paper modes.
 - Robinhood adapter placeholder.
-- Minimal desktop UI for recommendations and one-click approval.
-- Backtest replay skeleton.
+- Desktop UI with recommendation, account/positions, and audit tabs.
+- Backtest replay engine with stop/target/max-hold/end-of-test exits and performance reporting.
+
+Runtime state is stored in `data/ztrade.sqlite3` by default and is intentionally ignored by Git.
 
 ## Run The Demo
 
 From the repository root:
 
 ```powershell
-cd zTrade
+cd C:\zTrade
 python -m pip install -e .
 python -m ztrade.ui.desktop
+```
+
+Windows launcher:
+
+```powershell
+cd C:\zTrade
+.\launch_ztrade.cmd
 ```
 
 CLI demo:
 
 ```powershell
-cd zTrade
+cd C:\zTrade
 python -m pip install -e .
 python -m ztrade.app
 ```
 
+Unified CLI:
+
+```powershell
+cd C:\zTrade
+python -m ztrade.cli stream --limit 30
+python -m ztrade.cli stream --limit 30 --auto-paper
+python -m ztrade.cli stream --provider csv_replay --csv-path path\to\ohlcv.csv --limit 100
+python -m ztrade.cli stream --provider polygon_snapshot --symbols SPY,QQQ,AAPL --limit 30
+python -m ztrade.cli backtest-demo --snapshots 120 --max-hold 20
+python -m ztrade.cli backtest-csv path\to\ohlcv.csv --snapshots 1000
+python -m ztrade.cli db-summary
+```
+
+The desktop and CLI demos create `data/ztrade.sqlite3` for runtime audit data.
+
+For live snapshot polling, set environment variables first:
+
+```powershell
+$env:POLYGON_API_KEY='your-key'
+$env:FINNHUB_API_KEY='optional-news-key'
+python -m ztrade.cli stream --provider polygon_snapshot --symbols SPY,QQQ,AAPL --limit 30
+```
+
+Tradier option-chain normalization is available through `TradierOptionsClient` and expects `TRADIER_TOKEN` when wired into a provider workflow.
+
+## Demo Data Source
+
+The table is currently fed by `DemoDataProvider` in `src/ztrade/data/providers.py`. It emits deterministic fake stock quotes, option quotes, and occasional demo news items for the default watchlist so the UI, recommendation engine, guardrails, paper broker, and audit log can be tested before real provider credentials are added.
+
+CSV backtests can use `CsvReplayDataProvider`. Required columns:
+
+```text
+symbol,timestamp,open,high,low,close,volume
+```
+
+Optional columns:
+
+```text
+bid,ask,relative_volume,vwap
+```
+
+## Test And Smoke Commands
+
+```powershell
+cd C:\zTrade
+$env:PYTHONPATH='C:\zTrade\src'
+python -m unittest discover -s tests
+python scripts\smoke.py
+python -m compileall src tests scripts
+```
+
+## Completed Foundation
+
+1. Captured product requirements and guardrails.
+2. Created package scaffold and desktop demo.
+3. Added SQLite audit logging for market events, recommendations, orders, fills, paper account snapshots, and paper positions.
+4. Added a stateful paper broker with cash, position tracking, guaranteed fills, and no-margin rejection behavior.
+5. Added indicator library, expanded strategy pack, CSV replay provider, backtest engine, performance analytics, CLI commands, smoke tests, and richer desktop UI.
+6. Added credential-ready Polygon/Massive stock snapshot, Finnhub news, and Tradier option-chain adapters with offline parser tests.
+
 ## Near-Term Milestones
 
-1. Add persistent audit logging with SQLite.
-2. Add real data provider adapters for quotes, options chains, news, and options flow.
-3. Add historical data ingestion for backtesting.
-4. Expand strategy plugins and shared indicators.
-5. Add richer paper-trading fill models and performance analytics.
-6. Add account/PDT day-trade tracking.
-7. Harden desktop UI and add trade review workflows.
-8. Add broker integration only after paper-trading performance and API/legal constraints are settled.
+1. Wire option-chain selection into live provider workflows.
+2. Add websocket providers for lower-latency stock/news/options feeds.
+3. Add richer paper-trading fill models, slippage modes, and fee assumptions.
+4. Add account/PDT day-trade tracking.
+5. Add daily performance reports and strategy analytics.
+6. Harden desktop UI trade review workflows.
+7. Add broker integration only after paper-trading performance and API/legal constraints are settled.

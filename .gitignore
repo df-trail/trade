@@ -17,3 +17,5 @@ htmlcov/
 .env
 .env.*
 !.env.example
+data/*.sqlite3
+data/*.sqlite3-*

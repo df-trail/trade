@@ -20,6 +20,7 @@ analysis = [
 ]
 
 [project.scripts]
+ztrade = "ztrade.cli:main"
 ztrade-demo = "ztrade.app:main"
 ztrade-desktop = "ztrade.ui.desktop:main"
 
