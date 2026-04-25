@@ -42,3 +42,5 @@ This file records autonomous build progress so overnight or long-running work le
 - Added `--provider`, `--symbols`, `--csv-path`, and live polling flags to the stream CLI command.
 - Final verification target: compile, unit tests, smoke script, CLI demo stream, and demo backtest.
 - Pivoted future broker target to IBKR and added an IBKR broker placeholder plus integration notes.
+- Added persistent desktop settings in `data/settings.json` with add/delete ticker rows, instrument checkboxes, strategy checkboxes, and trade-limit fields.
+- Wired settings into the desktop feed so enabled tickers and selected strategies are the only inputs reaching the recommendations page.

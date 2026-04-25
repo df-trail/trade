@@ -175,9 +175,11 @@ The scaffold includes:
 - Execution engine supporting staged and auto-paper modes.
 - IBKR adapter placeholder.
 - Desktop UI with recommendation, account/positions, and audit tabs.
+- Settings tab for per-ticker instruments, strategy selection, and trade limits.
 - Backtest replay engine with stop/target/max-hold/end-of-test exits and performance reporting.
 
 Runtime state is stored in `data/ztrade.sqlite3` by default and is intentionally ignored by Git.
+Per-ticker UI settings are stored in `data/settings.json` and are intentionally ignored by Git.
 
 ## Run The Demo
 
@@ -237,6 +239,23 @@ Tradier option-chain normalization is available through `TradierOptionsClient` a
 
 The table is currently fed by `DemoDataProvider` in `src/ztrade/data/providers.py`. It emits deterministic fake stock quotes, option quotes, and occasional demo news items for the default watchlist so the UI, recommendation engine, guardrails, paper broker, and audit log can be tested before real provider credentials are added.
 
+## Desktop Settings
+
+The desktop Settings tab is the source of truth for what feeds the recommendations page.
+
+Each ticker row supports:
+
+- ticker symbol
+- enabled/disabled toggle
+- shares, simple trades, and complex trades checkboxes
+- strategy checkboxes for News, Breakout, VWAP, RSI, and Flow
+- max position percent
+- max trades per day setting
+- max option contracts
+- minimum confidence
+
+Click `Save + Apply` to persist settings to `data/settings.json`, restart the feed with only enabled tickers, and clear old recommendations from the main page.
+
 CSV backtests can use `CsvReplayDataProvider`. Required columns:
 
 ```text
@@ -267,6 +286,7 @@ python -m compileall src tests scripts
 4. Added a stateful paper broker with cash, position tracking, guaranteed fills, and no-margin rejection behavior.
 5. Added indicator library, expanded strategy pack, CSV replay provider, backtest engine, performance analytics, CLI commands, smoke tests, and richer desktop UI.
 6. Added credential-ready Polygon/Massive stock snapshot, Finnhub news, and Tradier option-chain adapters with offline parser tests.
+7. Added desktop Settings tab and settings policy so per-ticker settings control the recommendation feed.
 
 ## Near-Term Milestones
 

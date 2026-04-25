@@ -15,23 +15,70 @@ from ztrade.execution.engine import ExecutionEngine
 from ztrade.models import Fill, Recommendation, RecommendationStatus
 from ztrade.recommendations.engine import RecommendationEngine
 from ztrade.risk.guardrails import GuardrailEngine
+from ztrade.settings import (
+    STRATEGY_LABELS,
+    RecommendationSettingsPolicy,
+    SettingsStore,
+    TickerTradeSettings,
+    TradingSettings,
+)
 from ztrade.storage.sqlite import TradingStore
 from ztrade.strategies.registry import default_strategies
+
+
+class SettingsRowWidgets:
+    def __init__(self, row_id: int, settings: TickerTradeSettings) -> None:
+        self.row_id = row_id
+        self.symbol = tk.StringVar(value=settings.normalized_symbol)
+        self.enabled = tk.BooleanVar(value=settings.enabled)
+        self.trade_shares = tk.BooleanVar(value=settings.trade_shares)
+        self.trade_simple = tk.BooleanVar(value=settings.trade_simple)
+        self.trade_complex = tk.BooleanVar(value=settings.trade_complex)
+        self.strategy_vars = {
+            strategy: tk.BooleanVar(value=strategy in settings.strategies)
+            for strategy in STRATEGY_LABELS
+        }
+        self.max_position_pct = tk.StringVar(value=f"{settings.max_position_fraction * 100:.1f}")
+        self.max_trades_per_day = tk.StringVar(value=str(settings.max_trades_per_day))
+        self.max_option_contracts = tk.StringVar(value=str(settings.max_option_contracts))
+        self.min_confidence = tk.StringVar(value=f"{settings.min_confidence:.2f}")
+
+    def to_settings(self) -> TickerTradeSettings:
+        symbol = self.symbol.get().strip().upper()
+        strategies = tuple(strategy for strategy, value in self.strategy_vars.items() if value.get())
+        return TickerTradeSettings(
+            symbol=symbol,
+            enabled=self.enabled.get(),
+            trade_shares=self.trade_shares.get(),
+            trade_simple=self.trade_simple.get(),
+            trade_complex=self.trade_complex.get(),
+            strategies=strategies,
+            max_position_fraction=max(0.0, _parse_float(self.max_position_pct.get(), 10.0) / 100),
+            max_trades_per_day=max(0, _parse_int(self.max_trades_per_day.get(), 3)),
+            max_option_contracts=max(0, _parse_int(self.max_option_contracts.get(), 4)),
+            min_confidence=min(1.0, max(0.0, _parse_float(self.min_confidence.get(), 0.55))),
+        )
 
 
 class DesktopApp:
     def __init__(self) -> None:
         load_env_file()
         self.config = AppConfig(bot_mode=BotMode.STAGE_ONLY)
+        self.settings_store = SettingsStore()
+        self.trading_settings = self.settings_store.load(self.config.default_watchlist)
+        self._apply_settings_to_config()
         self.store = TradingStore(self.config.database_path)
         self.store.initialize()
         self.guardrails = GuardrailEngine(self.config.guardrails)
         self.broker = PaperBroker(self.config.guardrails.account_equity, store=self.store)
         self.execution = ExecutionEngine(self.config, self.broker, self.guardrails, store=self.store)
         self.recommender = RecommendationEngine(default_strategies(), self.guardrails)
+        self.settings_policy = RecommendationSettingsPolicy(self.trading_settings, self.config.guardrails)
         self.queue: Queue[Recommendation | Fill] = Queue()
         self.recommendations: dict[str, Recommendation] = {}
         self.sort_reverse: dict[str, bool] = {}
+        self.settings_rows: list[SettingsRowWidgets] = []
+        self._settings_row_id = 0
         self.feed_paused = False
 
         self.root = tk.Tk()
@@ -45,7 +92,7 @@ class DesktopApp:
         self._build_ui()
 
         self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._run_feed_loop, daemon=True)
+        self._thread = threading.Thread(target=self._run_feed_loop, args=(self._stop_event,), daemon=True)
         self._thread.start()
         self.root.after(250, self._drain_queue)
 
@@ -94,9 +141,11 @@ class DesktopApp:
         recommendations_tab = ttk.Frame(notebook)
         account_tab = ttk.Frame(notebook)
         audit_tab = ttk.Frame(notebook)
+        settings_tab = ttk.Frame(notebook)
         notebook.add(recommendations_tab, text="Recommendations + Trade Review")
         notebook.add(account_tab, text="Paper Account + Positions")
         notebook.add(audit_tab, text="SQLite Audit Log")
+        notebook.add(settings_tab, text="Settings")
 
         columns = (
             "status",
@@ -170,6 +219,8 @@ class DesktopApp:
         self.audit_tree.column("symbol", width=180)
         self.audit_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
+        self._build_settings_tab(settings_tab)
+
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
         ttk.Button(actions, text="Approve Selected", command=self._approve_selected).pack(side=tk.LEFT)
@@ -183,19 +234,26 @@ class DesktopApp:
         self.config.bot_mode = BotMode(self.mode_var.get())
         self.status_var.set(f"Mode changed to {self.config.bot_mode.value}.")
 
-    def _run_feed_loop(self) -> None:
-        asyncio.run(self._consume_feed())
+    def _run_feed_loop(self, stop_event: threading.Event) -> None:
+        asyncio.run(self._consume_feed(stop_event))
 
-    async def _consume_feed(self) -> None:
+    async def _consume_feed(self, stop_event: threading.Event) -> None:
+        if not self.config.default_watchlist:
+            while not stop_event.is_set():
+                await asyncio.sleep(0.5)
+            return
         provider = create_data_provider(self.config)
         async for snapshot in provider.stream():
-            if self._stop_event.is_set():
+            if stop_event.is_set():
                 return
             if self.feed_paused:
                 continue
             if self.config.record_market_events:
                 self.store.record_market_snapshot(snapshot)
             for recommendation in self.recommender.evaluate(snapshot):
+                recommendation = self.settings_policy.apply(recommendation)
+                if recommendation is None:
+                    continue
                 fill = await self.execution.handle_recommendation(recommendation)
                 if fill:
                     self.queue.put(fill)
@@ -229,6 +287,130 @@ class DesktopApp:
             )
             self._refresh_account()
         self.root.after(250, self._drain_queue)
+
+    def _build_settings_tab(self, parent: ttk.Frame) -> None:
+        toolbar = ttk.Frame(parent, padding=10)
+        toolbar.pack(fill=tk.X)
+        ttk.Button(toolbar, text="Add Ticker Row", command=self._add_settings_row).pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="Save + Apply", command=self._save_settings).pack(side=tk.LEFT, padx=8)
+        ttk.Button(toolbar, text="Reset Defaults", command=self._reset_settings_defaults).pack(side=tk.LEFT)
+        ttk.Label(
+            toolbar,
+            text="Settings control which symbols and strategies feed the recommendations page.",
+            style="Subtle.TLabel",
+        ).pack(side=tk.LEFT, padx=(18, 0))
+
+        self.settings_canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.settings_canvas.yview)
+        self.settings_frame = ttk.Frame(self.settings_canvas, padding=(10, 0, 10, 10))
+        self.settings_frame.bind(
+            "<Configure>",
+            lambda _event: self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all")),
+        )
+        self.settings_canvas.create_window((0, 0), window=self.settings_frame, anchor="nw")
+        self.settings_canvas.configure(yscrollcommand=scrollbar.set)
+        self.settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._render_settings_rows(self.trading_settings)
+
+    def _render_settings_rows(self, settings: TradingSettings) -> None:
+        for child in self.settings_frame.winfo_children():
+            child.destroy()
+        self.settings_rows = []
+        headers = (
+            "On",
+            "Ticker",
+            "Shares",
+            "Simple",
+            "Complex",
+            *STRATEGY_LABELS.values(),
+            "Max %",
+            "Trades",
+            "Contracts",
+            "Min Conf",
+            "",
+        )
+        for column, header in enumerate(headers):
+            ttk.Label(self.settings_frame, text=header).grid(row=0, column=column, sticky=tk.W, padx=4, pady=(0, 6))
+        for settings_row in settings.tickers:
+            self._add_settings_row(settings_row)
+
+    def _add_settings_row(self, settings: TickerTradeSettings | None = None) -> None:
+        self._settings_row_id += 1
+        row_widgets = SettingsRowWidgets(
+            self._settings_row_id,
+            settings or TickerTradeSettings(symbol=""),
+        )
+        self.settings_rows.append(row_widgets)
+        row_index = len(self.settings_rows)
+        ttk.Checkbutton(self.settings_frame, variable=row_widgets.enabled).grid(row=row_index, column=0, padx=4, pady=3)
+        ttk.Entry(self.settings_frame, textvariable=row_widgets.symbol, width=8).grid(row=row_index, column=1, padx=4, pady=3)
+        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_shares).grid(row=row_index, column=2, padx=4)
+        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_simple).grid(row=row_index, column=3, padx=4)
+        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_complex).grid(row=row_index, column=4, padx=4)
+        strategy_start = 5
+        for offset, strategy in enumerate(STRATEGY_LABELS):
+            ttk.Checkbutton(
+                self.settings_frame,
+                variable=row_widgets.strategy_vars[strategy],
+            ).grid(row=row_index, column=strategy_start + offset, padx=4)
+        limit_start = strategy_start + len(STRATEGY_LABELS)
+        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_position_pct, width=7).grid(row=row_index, column=limit_start, padx=4)
+        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_trades_per_day, width=6).grid(row=row_index, column=limit_start + 1, padx=4)
+        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_option_contracts, width=8).grid(row=row_index, column=limit_start + 2, padx=4)
+        ttk.Entry(self.settings_frame, textvariable=row_widgets.min_confidence, width=8).grid(row=row_index, column=limit_start + 3, padx=4)
+        ttk.Button(
+            self.settings_frame,
+            text="Delete",
+            command=lambda target=row_widgets: self._delete_settings_row(target),
+        ).grid(row=row_index, column=limit_start + 4, padx=4)
+
+    def _delete_settings_row(self, target: SettingsRowWidgets) -> None:
+        settings = TradingSettings(
+            tickers=tuple(row.to_settings() for row in self.settings_rows if row is not target),
+        )
+        self._render_settings_rows(settings)
+
+    def _save_settings(self) -> None:
+        rows = [row.to_settings() for row in self.settings_rows if row.to_settings().normalized_symbol]
+        deduped: dict[str, TickerTradeSettings] = {}
+        for row in rows:
+            deduped[row.normalized_symbol] = row
+        self.trading_settings = TradingSettings(tickers=tuple(deduped.values()))
+        self.settings_store.save(self.trading_settings)
+        self._render_settings_rows(self.trading_settings)
+        self._apply_settings_to_config()
+        self.settings_policy = RecommendationSettingsPolicy(self.trading_settings, self.config.guardrails)
+        self._clear_recommendations()
+        self._restart_feed()
+        self.status_var.set(f"Settings saved. Active tickers: {', '.join(self.config.default_watchlist) or 'none'}.")
+
+    def _reset_settings_defaults(self) -> None:
+        self.trading_settings = TradingSettings(
+            tickers=tuple(TickerTradeSettings(symbol=symbol) for symbol in AppConfig().default_watchlist),
+        )
+        self._render_settings_rows(self.trading_settings)
+
+    def _clear_recommendations(self) -> None:
+        self.recommendations.clear()
+        while not self.queue.empty():
+            self.queue.get_nowait()
+        for item_id in self.tree.get_children(""):
+            self.tree.delete(item_id)
+        self.details.configure(state=tk.NORMAL)
+        self.details.delete("1.0", tk.END)
+        self.details.insert("1.0", "Settings applied. Waiting for matching recommendations.")
+        self.details.configure(state=tk.DISABLED)
+
+    def _apply_settings_to_config(self) -> None:
+        self.config.default_watchlist = self.trading_settings.active_symbols
+
+    def _restart_feed(self) -> None:
+        self._stop_event.set()
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._run_feed_loop, args=(self._stop_event,), daemon=True)
+        self._thread.start()
 
     def _sort_by_column(self, column: str) -> None:
         reverse = not self.sort_reverse.get(column, False)
@@ -367,6 +549,20 @@ def _format_optional_price(value: float | None) -> str:
     if value is None:
         return ""
     return f"{value:.2f}"
+
+
+def _parse_float(value: str, default: float) -> float:
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _parse_int(value: str, default: int) -> int:
+    try:
+        return int(float(value))
+    except ValueError:
+        return default
 
 
 if __name__ == "__main__":

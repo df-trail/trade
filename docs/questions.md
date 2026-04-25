@@ -27,3 +27,5 @@ Questions are saved here during autonomous work instead of interrupting the buil
 - Should backtests relax intraday `max_trades_per_day` so strategy research can evaluate more signals, or keep the exact live guardrails by default?
 - Should live provider configuration live in `.env`, a local YAML file, or only environment variables?
 - Which source should own option-chain selection in live mode: Polygon/Massive, Tradier, or a dedicated options vendor?
+- Should per-ticker `max_trades_per_day` be enforced across app restarts using SQLite trade history, or only as an in-memory session rule?
+- What should "complex trades" mean for the first implementation: vertical spreads only, or also straddles/strangles/iron condors?

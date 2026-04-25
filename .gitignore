@@ -19,3 +19,4 @@ htmlcov/
 !.env.example
 data/*.sqlite3
 data/*.sqlite3-*
+data/settings.json
