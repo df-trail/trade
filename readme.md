@@ -1,6 +1,6 @@
 # zTrade
 
-Advanced personal stock and single-leg options trading workstation. The first milestone is paper trading with realistic strategy scoring, one-click staged trades, bot guardrails, and a broker adapter boundary that can later connect to Robinhood or another broker with supported API access.
+Advanced personal stock and single-leg options trading workstation. The first milestone is paper trading with realistic strategy scoring, one-click staged trades, bot guardrails, and a broker adapter boundary that can later connect to IBKR with supported API access.
 
 This project is for personal research and paper trading first. It should not place live orders until the strategy, risk controls, data feeds, credentials, and broker terms are reviewed.
 
@@ -17,7 +17,7 @@ This project is for personal research and paper trading first. It should not pla
 - Stocks.
 - Single-leg options.
 - No margin.
-- Account starts below $25k, so Robinhood PDT constraints must be respected.
+- Account starts below $25k, so PDT constraints must be respected.
 
 ### Strategy Scope
 
@@ -115,10 +115,11 @@ The app should expose a broad set of configurable guardrails:
 
 ### Broker Notes
 
-- Robinhood is the desired broker eventually.
+- IBKR is the desired broker eventually.
 - Current scaffold keeps broker integration behind an adapter.
-- Paper trading must work without Robinhood credentials.
-- Live Robinhood securities trading should only be added through supported/authorized API access and after reviewing broker terms, rate limits, order behavior, and market-data limitations.
+- Paper trading must work without IBKR credentials.
+- Initial IBKR integration should target the IBKR paper account through TWS or IB Gateway API, with Web/Client Portal API evaluated separately.
+- Live IBKR securities trading should only be added after supported API access, contract lookup, paper-order behavior, order preview, rate limits, market-data entitlements, and kill-switch behavior are reviewed.
 
 ## Architecture
 
@@ -172,7 +173,7 @@ The scaffold includes:
 - Guardrail engine with PDT, sizing, liquidity, confidence, and bot-safety checks.
 - Paper broker with guaranteed fills for accepted paper orders plus cash and position tracking.
 - Execution engine supporting staged and auto-paper modes.
-- Robinhood adapter placeholder.
+- IBKR adapter placeholder.
 - Desktop UI with recommendation, account/positions, and audit tabs.
 - Backtest replay engine with stop/target/max-hold/end-of-test exits and performance reporting.
 
@@ -275,4 +276,4 @@ python -m compileall src tests scripts
 4. Add account/PDT day-trade tracking.
 5. Add daily performance reports and strategy analytics.
 6. Harden desktop UI trade review workflows.
-7. Add broker integration only after paper-trading performance and API/legal constraints are settled.
+7. Add IBKR broker integration only after paper-trading performance and API/legal constraints are settled.

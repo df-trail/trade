@@ -41,3 +41,4 @@ This file records autonomous build progress so overnight or long-running work le
 - Added offline parser tests for live-data adapters.
 - Added `--provider`, `--symbols`, `--csv-path`, and live polling flags to the stream CLI command.
 - Final verification target: compile, unit tests, smoke script, CLI demo stream, and demo backtest.
+- Pivoted future broker target to IBKR and added an IBKR broker placeholder plus integration notes.
