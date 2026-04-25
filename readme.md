@@ -228,6 +228,8 @@ $env:FINNHUB_API_KEY='optional-news-key'
 python -m ztrade.cli stream --provider polygon_snapshot --symbols SPY,QQQ,AAPL --limit 30
 ```
 
+You can also copy `.env.example` to `.env`; zTrade loads `.env` automatically at startup.
+
 Tradier option-chain normalization is available through `TradierOptionsClient` and expects `TRADIER_TOKEN` when wired into a provider workflow.
 
 ## Demo Data Source

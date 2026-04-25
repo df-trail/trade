@@ -9,6 +9,7 @@ from ztrade.backtest.engine import BacktestConfig, BacktestEngine
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode, DataProviderKind
 from ztrade.data.factory import create_data_provider
+from ztrade.env import load_env_file
 from ztrade.execution.engine import ExecutionEngine
 from ztrade.recommendations.engine import RecommendationEngine
 from ztrade.risk.guardrails import GuardrailEngine
@@ -18,6 +19,7 @@ from ztrade.ui.desktop import main as desktop_main
 
 
 def main() -> None:
+    load_env_file()
     parser = argparse.ArgumentParser(prog="ztrade", description="zTrade personal paper-trading workstation")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

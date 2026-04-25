@@ -10,6 +10,7 @@ from ztrade import __version__
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode
 from ztrade.data.factory import create_data_provider
+from ztrade.env import load_env_file
 from ztrade.execution.engine import ExecutionEngine
 from ztrade.models import Fill, Recommendation, RecommendationStatus
 from ztrade.recommendations.engine import RecommendationEngine
@@ -20,6 +21,7 @@ from ztrade.strategies.registry import default_strategies
 
 class DesktopApp:
     def __init__(self) -> None:
+        load_env_file()
         self.config = AppConfig(bot_mode=BotMode.STAGE_ONLY)
         self.store = TradingStore(self.config.database_path)
         self.store.initialize()

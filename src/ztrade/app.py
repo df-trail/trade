@@ -5,6 +5,7 @@ import asyncio
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode
 from ztrade.data.factory import create_data_provider
+from ztrade.env import load_env_file
 from ztrade.execution.engine import ExecutionEngine
 from ztrade.recommendations.engine import RecommendationEngine
 from ztrade.risk.guardrails import GuardrailEngine
@@ -13,6 +14,7 @@ from ztrade.strategies.registry import default_strategies
 
 
 async def run_demo() -> None:
+    load_env_file()
     config = AppConfig(bot_mode=BotMode.STAGE_ONLY)
     store = TradingStore(config.database_path)
     store.initialize()
