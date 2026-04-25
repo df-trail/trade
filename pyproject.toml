@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ztrade"
+version = "0.1.0"
+description = "Personal stock and single-leg options trading workstation scaffold."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+feeds = [
+  "httpx>=0.27",
+  "websockets>=12",
+]
+analysis = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+]
+
+[project.scripts]
+ztrade-demo = "ztrade.app:main"
+ztrade-desktop = "ztrade.ui.desktop:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
