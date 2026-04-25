@@ -11,6 +11,10 @@ from ztrade.data.providers import DataProvider
 from ztrade.execution.engine import ExecutionEngine
 from ztrade.models import AssetClass, Fill, MarketSnapshot, Order, OrderSide, OrderType, Recommendation, TradeIdea
 from ztrade.recommendations.engine import RecommendationEngine
+from ztrade.backtest.events import BacktestEvent, BacktestEventType
+
+
+EventSink = Callable[[BacktestEvent], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,10 +61,14 @@ class BacktestEngine:
     def replay(self, snapshots: list[MarketSnapshot]) -> BacktestResult:
         return _run_async_replay(self.run(_ListProvider(snapshots)))
 
-    async def run(self, provider: DataProvider) -> BacktestResult:
-        return await self.run_snapshots(provider.stream())
+    async def run(self, provider: DataProvider, event_sink: EventSink | None = None) -> BacktestResult:
+        return await self.run_snapshots(provider.stream(), event_sink=event_sink)
 
-    async def run_snapshots(self, snapshots: AsyncIterator[MarketSnapshot]) -> BacktestResult:
+    async def run_snapshots(
+        self,
+        snapshots: AsyncIterator[MarketSnapshot],
+        event_sink: EventSink | None = None,
+    ) -> BacktestResult:
         recommendations: list[Recommendation] = []
         fills: list[Fill] = []
         closed_trades: list[TradeRecord] = []
@@ -74,20 +82,100 @@ class BacktestEngine:
             snapshot_index += 1
             last_snapshot_by_symbol[snapshot.symbol] = snapshot
             last_index_by_symbol[snapshot.symbol] = snapshot_index
+            _emit(
+                event_sink,
+                BacktestEvent(
+                    event_type=BacktestEventType.BAR,
+                    snapshot_index=snapshot_index,
+                    symbol=snapshot.symbol,
+                    timestamp=snapshot.quote.timestamp,
+                    snapshot=snapshot,
+                    equity=self._paper_broker.account_state().equity,
+                    message=f"{snapshot.symbol} bar {snapshot_index} @ {snapshot.latest_close:.2f}",
+                ),
+            )
             exit_fills, trade_records = await self._process_exits(snapshot, open_trades, snapshot_index)
             fills.extend(exit_fills)
             closed_trades.extend(trade_records)
+            for fill in exit_fills:
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.EXIT_FILL,
+                        snapshot_index=snapshot_index,
+                        symbol=fill.order.symbol,
+                        timestamp=fill.timestamp,
+                        fill=fill,
+                        equity=self._paper_broker.account_state().equity,
+                        message=f"Exit fill {fill.order.symbol} {fill.quantity} @ {fill.price:.2f}",
+                    ),
+                )
+            for trade_record in trade_records:
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.TRADE_CLOSED,
+                        snapshot_index=snapshot_index,
+                        symbol=trade_record.symbol,
+                        timestamp=trade_record.exit_timestamp or snapshot.quote.timestamp,
+                        trade=trade_record,
+                        equity=self._paper_broker.account_state().equity,
+                        message=f"Closed {trade_record.symbol} {trade_record.strategy} P/L {trade_record.pnl:+.2f}",
+                    ),
+                )
 
             for recommendation in self._recommendation_engine.evaluate(snapshot):
+                original_recommendation = recommendation
                 if self._recommendation_filter:
                     recommendation = self._recommendation_filter(recommendation)
                     if recommendation is None:
+                        _emit(
+                            event_sink,
+                            BacktestEvent(
+                                event_type=BacktestEventType.FILTERED_SIGNAL,
+                                snapshot_index=snapshot_index,
+                                symbol=original_recommendation.idea.symbol,
+                                timestamp=snapshot.quote.timestamp,
+                                snapshot=snapshot,
+                                recommendation=original_recommendation,
+                                equity=self._paper_broker.account_state().equity,
+                                message=f"Filtered {original_recommendation.idea.symbol} {original_recommendation.idea.strategy}",
+                            ),
+                        )
                         continue
                 recommendations.append(recommendation)
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.SIGNAL,
+                        snapshot_index=snapshot_index,
+                        symbol=recommendation.idea.symbol,
+                        timestamp=snapshot.quote.timestamp,
+                        snapshot=snapshot,
+                        recommendation=recommendation,
+                        equity=self._paper_broker.account_state().equity,
+                        message=(
+                            f"Signal {recommendation.idea.symbol} {recommendation.idea.strategy} "
+                            f"confidence {recommendation.idea.confidence:.2f}"
+                        ),
+                    ),
+                )
                 fill = await self._execution_engine.approve(recommendation)
                 if fill is None:
                     continue
                 fills.append(fill)
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.ENTRY_FILL,
+                        snapshot_index=snapshot_index,
+                        symbol=fill.order.symbol,
+                        timestamp=fill.timestamp,
+                        fill=fill,
+                        equity=self._paper_broker.account_state().equity,
+                        message=f"Entry fill {fill.order.symbol} {fill.quantity} @ {fill.price:.2f}",
+                    ),
+                )
                 open_trades.append(
                     OpenTrade(
                         recommendation=recommendation,
@@ -98,6 +186,17 @@ class BacktestEngine:
                 )
 
             equity_curve.append(self._paper_broker.account_state().equity)
+            _emit(
+                event_sink,
+                BacktestEvent(
+                    event_type=BacktestEventType.EQUITY,
+                    snapshot_index=snapshot_index,
+                    symbol=snapshot.symbol,
+                    timestamp=snapshot.quote.timestamp,
+                    equity=equity_curve[-1],
+                    message=f"Equity {equity_curve[-1]:.2f}",
+                ),
+            )
             if self._backtest_config.max_snapshots and snapshot_index >= self._backtest_config.max_snapshots:
                 break
 
@@ -106,6 +205,35 @@ class BacktestEngine:
             fills.extend(exit_fills)
             closed_trades.extend(trade_records)
             equity_curve.append(self._paper_broker.account_state().equity)
+            for fill in exit_fills:
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.EXIT_FILL,
+                        snapshot_index=last_index_by_symbol.get(
+                            fill.order.option_contract.underlying if fill.order.option_contract else fill.order.symbol,
+                            snapshot_index,
+                        ),
+                        symbol=fill.order.symbol,
+                        timestamp=fill.timestamp,
+                        fill=fill,
+                        equity=self._paper_broker.account_state().equity,
+                        message=f"Final exit fill {fill.order.symbol} {fill.quantity} @ {fill.price:.2f}",
+                    ),
+                )
+            for trade_record in trade_records:
+                _emit(
+                    event_sink,
+                    BacktestEvent(
+                        event_type=BacktestEventType.TRADE_CLOSED,
+                        snapshot_index=trade_record.exit_index or snapshot_index,
+                        symbol=trade_record.symbol,
+                        timestamp=trade_record.exit_timestamp or datetime.now(),
+                        trade=trade_record,
+                        equity=self._paper_broker.account_state().equity,
+                        message=f"Closed {trade_record.symbol} {trade_record.strategy} P/L {trade_record.pnl:+.2f}",
+                    ),
+                )
 
         account = self._paper_broker.account_state()
         report = build_performance_report(
@@ -117,6 +245,20 @@ class BacktestEngine:
             fills=len(fills),
             trades=tuple(closed_trades),
             equity_curve=tuple(equity_curve),
+        )
+        _emit(
+            event_sink,
+            BacktestEvent(
+                event_type=BacktestEventType.COMPLETE,
+                snapshot_index=snapshot_index,
+                symbol="",
+                equity=account.equity,
+                message=(
+                    f"Backtest complete: {len(recommendations)} recommendations, "
+                    f"{len(closed_trades)} closed trades, return {report.return_pct:.3f}%"
+                ),
+                metadata={"report": report},
+            ),
         )
         return BacktestResult(
             recommendations=tuple(recommendations),
@@ -212,6 +354,11 @@ def _run_async_replay(coro: object) -> BacktestResult:
     import asyncio
 
     return asyncio.run(coro)
+
+
+def _emit(event_sink: EventSink | None, event: BacktestEvent) -> None:
+    if event_sink is not None:
+        event_sink(event)
 
 
 def _exit_price_for_snapshot(snapshot: MarketSnapshot, idea: TradeIdea) -> float | None:

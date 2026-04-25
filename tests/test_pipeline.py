@@ -4,6 +4,7 @@ import asyncio
 import unittest
 
 from ztrade.backtest.engine import BacktestConfig, BacktestEngine
+from ztrade.backtest.events import BacktestEvent, BacktestEventType
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig
 from ztrade.data.factory import create_data_provider
@@ -83,6 +84,31 @@ class PipelineTests(unittest.TestCase):
             return len(result.recommendations)
 
         self.assertEqual(asyncio.run(run()), 0)
+
+    def test_backtest_emits_replay_events(self) -> None:
+        async def run() -> tuple[int, set[BacktestEventType]]:
+            config = AppConfig()
+            guardrails = GuardrailEngine(config.guardrails)
+            broker = PaperBroker(config.guardrails.account_equity)
+            recommender = RecommendationEngine(default_strategies(), guardrails)
+            execution = ExecutionEngine(config, broker, guardrails)
+            events: list[BacktestEvent] = []
+            backtest = BacktestEngine(
+                config,
+                recommender,
+                execution,
+                broker,
+                BacktestConfig(max_snapshots=35, max_hold_snapshots=6),
+            )
+            await backtest.run(create_data_provider(config), event_sink=events.append)
+            return len(events), {event.event_type for event in events}
+
+        count, event_types = asyncio.run(run())
+        self.assertGreater(count, 0)
+        self.assertIn(BacktestEventType.BAR, event_types)
+        self.assertIn(BacktestEventType.SIGNAL, event_types)
+        self.assertIn(BacktestEventType.EQUITY, event_types)
+        self.assertIn(BacktestEventType.COMPLETE, event_types)
 
 
 if __name__ == "__main__":

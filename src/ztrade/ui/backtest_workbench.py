@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from tkinter import ttk
 
 from ztrade.analytics.performance import TradeRecord
+from ztrade.backtest.events import BacktestEvent, BacktestEventType
 from ztrade.backtest.engine import BacktestConfig, BacktestEngine, BacktestResult, relax_guardrails_for_backtest
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, DataProviderKind
@@ -30,6 +31,12 @@ class WorkbenchDefaults:
     max_hold: int = 20
 
 
+@dataclass(frozen=True, slots=True)
+class WorkbenchRun:
+    result: BacktestResult
+    events: tuple[BacktestEvent, ...]
+
+
 class BacktestWorkbenchWindow:
     def __init__(
         self,
@@ -44,7 +51,16 @@ class BacktestWorkbenchWindow:
         self.on_complete = on_complete
         self.bars: tuple[Bar, ...] = ()
         self.result: BacktestResult | None = None
+        self.events: tuple[BacktestEvent, ...] = ()
         self.is_running = False
+        self.replay_running = False
+        self.replay_after_id: str | None = None
+        self.replay_index = 0
+        self.replay_bar_count = 0
+        self.replay_signals = 0
+        self.replay_fills = 0
+        self.replay_trades: list[TradeRecord] = []
+        self.replay_equity: list[float] = []
 
         self.window = tk.Toplevel(master)
         self.window.title(f"zTrade Backtest Workbench - {row.normalized_symbol}")
@@ -59,6 +75,7 @@ class BacktestWorkbenchWindow:
         self.duration_var = tk.StringVar(value="2 D")
         self.bar_size_var = tk.StringVar(value="5 mins")
         self.use_rth_var = tk.BooleanVar(value=True)
+        self.speed_var = tk.StringVar(value="4x")
         self.status_var = tk.StringVar(value="Ready. Load history or execute a backtest.")
 
         self.metric_vars = {
@@ -123,6 +140,18 @@ class BacktestWorkbenchWindow:
         self.load_button.pack(side=tk.LEFT, padx=(0, 8))
         self.execute_button = ttk.Button(toolbar, text="Execute Backtest", command=self.execute)
         self.execute_button.pack(side=tk.LEFT, padx=(0, 8))
+        self.play_button = ttk.Button(toolbar, text="Play", command=self.play_replay)
+        self.play_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.pause_button = ttk.Button(toolbar, text="Pause", command=self.pause_replay)
+        self.pause_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.step_button = ttk.Button(toolbar, text="Step", command=self.step_replay)
+        self.step_button.pack(side=tk.LEFT, padx=(0, 4))
+        self.reset_button = ttk.Button(toolbar, text="Reset Replay", command=self.reset_replay)
+        self.reset_button.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Combobox(toolbar, textvariable=self.speed_var, values=("1x", "2x", "4x", "8x", "16x"), state="readonly", width=5).pack(
+            side=tk.LEFT,
+            padx=(0, 8),
+        )
         ttk.Button(toolbar, text="Clear", command=self._clear_results).pack(side=tk.LEFT)
 
         csv_row = tk.Frame(self.window, bg="#f8fafc", padx=10, pady=6)
@@ -206,9 +235,22 @@ class BacktestWorkbenchWindow:
         self.ledger.pack(fill=tk.BOTH, expand=True)
         self.ledger.bind("<<TreeviewSelect>>", self._select_trade)
 
+        events_frame = tk.LabelFrame(right, text="Replay Events", bg="#f8fafc", fg="#0f172a", padx=8, pady=8)
+        events_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        event_columns = ("index", "type", "detail")
+        self.event_tree = ttk.Treeview(events_frame, columns=event_columns, show="headings", height=8)
+        self.event_tree.heading("index", text="#")
+        self.event_tree.heading("type", text="Event")
+        self.event_tree.heading("detail", text="Detail")
+        self.event_tree.column("index", width=38, anchor=tk.E)
+        self.event_tree.column("type", width=92, anchor=tk.W)
+        self.event_tree.column("detail", width=175, anchor=tk.W)
+        self.event_tree.pack(fill=tk.BOTH, expand=True)
+
         log_frame = tk.Frame(right, bg="#f8fafc")
         log_frame.pack(fill=tk.X, pady=(8, 0))
         tk.Label(log_frame, textvariable=self.status_var, bg="#f8fafc", fg="#1e3a8a", wraplength=290, justify=tk.LEFT).pack(fill=tk.X)
+        self._set_playback_controls_enabled(False)
 
     def _toolbar_field(self, parent: tk.Widget, text: str) -> None:
         tk.Label(parent, text=text, bg="#dbeafe", fg="#334155").pack(side=tk.LEFT)
@@ -251,11 +293,11 @@ class BacktestWorkbenchWindow:
             if not snapshots:
                 raise ValueError(f"No snapshots returned for {self.row.normalized_symbol}.")
             bars = tuple(_bar_for_snapshot(snapshot) for snapshot in snapshots)
-            result = None
+            run = None
             if run_backtest:
-                result = asyncio.run(_run_backtest_from_snapshots(config, self.row, snapshots, max_hold))
+                run = asyncio.run(_run_backtest_with_events_from_snapshots(config, self.row, snapshots, max_hold))
             elapsed = time.perf_counter() - started
-            self.window.after(0, lambda: self._show_worker_result(bars, result, elapsed))
+            self.window.after(0, lambda: self._show_worker_result(bars, run, elapsed))
         except Exception as exc:
             message = str(exc)
             self.window.after(0, lambda: self._show_worker_error(message))
@@ -284,22 +326,25 @@ class BacktestWorkbenchWindow:
     def _max_hold(self) -> int:
         return max(1, _parse_int(self.max_hold_var.get(), 20))
 
-    def _show_worker_result(self, bars: tuple[Bar, ...], result: BacktestResult | None, elapsed: float) -> None:
+    def _show_worker_result(self, bars: tuple[Bar, ...], run: WorkbenchRun | None, elapsed: float) -> None:
         self.bars = bars
-        self.result = result
+        self.result = run.result if run else None
+        self.events = run.events if run else ()
         self._populate_metrics()
-        self._populate_ledger()
+        self._prepare_replay()
         self._redraw_all()
         self._set_buttons_enabled(True)
+        self._set_playback_controls_enabled(bool(self.events))
         self.is_running = False
-        if result is None:
+        if run is None:
             self.status_var.set(f"Loaded {len(bars)} bars in {elapsed:.1f}s.")
             return
         self.status_var.set(
-            f"Backtest complete in {elapsed:.1f}s. Select a ledger row to highlight a trade on the chart."
+            f"Backtest generated {len(self.events)} replay events in {elapsed:.1f}s. Press Play, Step, or Reset Replay."
         )
         if self.on_complete is not None:
-            self.on_complete(self.row, result)
+            self.on_complete(self.row, run.result)
+        self.play_replay()
 
     def _show_worker_error(self, message: str) -> None:
         self._set_buttons_enabled(True)
@@ -311,15 +356,149 @@ class BacktestWorkbenchWindow:
         self.load_button.configure(state=state)
         self.execute_button.configure(state=state)
 
+    def _set_playback_controls_enabled(self, enabled: bool) -> None:
+        state = tk.NORMAL if enabled else tk.DISABLED
+        self.play_button.configure(state=state)
+        self.pause_button.configure(state=state)
+        self.step_button.configure(state=state)
+        self.reset_button.configure(state=state)
+
+    def _prepare_replay(self) -> None:
+        self.pause_replay()
+        self.replay_index = 0
+        self.replay_bar_count = 0
+        self.replay_signals = 0
+        self.replay_fills = 0
+        self.replay_trades = []
+        self.replay_equity = []
+        self._clear_ledger()
+        self._clear_event_log()
+        if not self.events:
+            self._populate_ledger()
+        self._refresh_replay_metrics()
+
+    def play_replay(self) -> None:
+        if not self.events:
+            self.status_var.set("Execute a backtest before playing replay events.")
+            return
+        if self.replay_index >= len(self.events):
+            self.status_var.set("Replay is already complete. Use Reset Replay to watch it again.")
+            return
+        self.replay_running = True
+        self._schedule_replay()
+
+    def pause_replay(self) -> None:
+        self.replay_running = False
+        if self.replay_after_id is not None:
+            self.window.after_cancel(self.replay_after_id)
+            self.replay_after_id = None
+
+    def step_replay(self) -> None:
+        if not self.events:
+            return
+        self.pause_replay()
+        self._advance_replay()
+
+    def reset_replay(self) -> None:
+        if not self.events:
+            return
+        self._prepare_replay()
+        self._redraw_all()
+        self.status_var.set("Replay reset. Press Play or Step.")
+
+    def _schedule_replay(self) -> None:
+        if not self.replay_running:
+            return
+        self._advance_replay()
+        if self.replay_running:
+            self.replay_after_id = self.window.after(self._replay_delay_ms(), self._schedule_replay)
+
+    def _advance_replay(self) -> None:
+        if self.replay_index >= len(self.events):
+            self.replay_running = False
+            self.replay_after_id = None
+            self._populate_metrics()
+            self.status_var.set("Replay complete. Select a ledger row to highlight a trade.")
+            return
+        event = self.events[self.replay_index]
+        self.replay_index += 1
+        self._apply_replay_event(event)
+        self._refresh_replay_metrics()
+        self._redraw_all()
+        if self.replay_index >= len(self.events):
+            self.replay_running = False
+            self.replay_after_id = None
+
+    def _apply_replay_event(self, event: BacktestEvent) -> None:
+        if event.event_type == BacktestEventType.BAR:
+            self.replay_bar_count = max(self.replay_bar_count, event.snapshot_index)
+        elif event.event_type in {BacktestEventType.SIGNAL, BacktestEventType.FILTERED_SIGNAL}:
+            if event.event_type == BacktestEventType.SIGNAL:
+                self.replay_signals += 1
+        elif event.event_type in {BacktestEventType.ENTRY_FILL, BacktestEventType.EXIT_FILL}:
+            self.replay_fills += 1
+        elif event.event_type == BacktestEventType.TRADE_CLOSED and event.trade is not None:
+            self.replay_trades.append(event.trade)
+            self._insert_trade(event.trade, len(self.replay_trades) - 1)
+        if event.equity is not None and event.event_type in {BacktestEventType.BAR, BacktestEventType.EQUITY, BacktestEventType.COMPLETE}:
+            self.replay_equity.append(event.equity)
+        self._log_event(event)
+        if event.message:
+            self.status_var.set(event.message)
+
+    def _replay_delay_ms(self) -> int:
+        speed = self.speed_var.get().strip().lower()
+        multiplier = {
+            "1x": 1,
+            "2x": 2,
+            "4x": 4,
+            "8x": 8,
+            "16x": 16,
+        }.get(speed, 4)
+        return max(40, int(420 / multiplier))
+
+    def _refresh_replay_metrics(self) -> None:
+        if not self.events:
+            return
+        self.metric_vars["bars"].set(f"{min(self.replay_bar_count, len(self.bars))}/{len(self.bars)}")
+        self.metric_vars["recs"].set(f"{self.replay_signals}/{self.result.report.total_recommendations if self.result else 0}")
+        self.metric_vars["fills"].set(f"{self.replay_fills}/{self.result.report.total_fills if self.result else 0}")
+        self.metric_vars["trades"].set(f"{len(self.replay_trades)}/{self.result.report.closed_trades if self.result else 0}")
+        self.metric_vars["buy_hold"].set(_pct(self._buy_hold_return_pct(self._visible_bars())))
+        if self.replay_equity:
+            self.metric_vars["equity"].set(f"${self.replay_equity[-1]:,.2f}")
+
+    def _clear_event_log(self) -> None:
+        for item_id in self.event_tree.get_children(""):
+            self.event_tree.delete(item_id)
+
+    def _log_event(self, event: BacktestEvent) -> None:
+        detail = event.message or event.event_type.value
+        self.event_tree.insert(
+            "",
+            tk.END,
+            values=(event.snapshot_index, event.event_type.value, detail[:120]),
+        )
+        children = self.event_tree.get_children("")
+        if len(children) > 500:
+            self.event_tree.delete(children[0])
+        latest = self.event_tree.get_children("")[-1]
+        self.event_tree.see(latest)
+
     def _clear_results(self) -> None:
+        self.pause_replay()
         self.bars = ()
         self.result = None
+        self.events = ()
+        self.replay_trades = []
+        self.replay_equity = []
         for variable in self.metric_vars.values():
             variable.set("-")
-        for item_id in self.ledger.get_children(""):
-            self.ledger.delete(item_id)
+        self._clear_ledger()
+        self._clear_event_log()
         self.chart_canvas.delete("all")
         self.equity_canvas.delete("all")
+        self._set_playback_controls_enabled(False)
         self.status_var.set("Cleared. Load history or execute a backtest.")
 
     def _populate_metrics(self) -> None:
@@ -340,24 +519,34 @@ class BacktestWorkbenchWindow:
         self.metric_vars["equity"].set(f"${report.ending_equity:,.2f}")
 
     def _populate_ledger(self) -> None:
-        for item_id in self.ledger.get_children(""):
-            self.ledger.delete(item_id)
+        self._clear_ledger()
         if self.result is None:
             return
         for index, trade in enumerate(self.result.trades):
-            self.ledger.insert(
-                "",
-                tk.END,
-                iid=str(index),
-                values=(
-                    trade.strategy,
-                    trade.asset_class,
-                    f"{trade.entry_price:.2f}",
-                    f"{trade.exit_price:.2f}",
-                    f"{trade.pnl:.2f}",
-                    trade.exit_reason,
-                ),
-            )
+            self._insert_trade(trade, index)
+
+    def _clear_ledger(self) -> None:
+        for item_id in self.ledger.get_children(""):
+            self.ledger.delete(item_id)
+
+    def _insert_trade(self, trade: TradeRecord, index: int) -> None:
+        item_id = str(index)
+        if self.ledger.exists(item_id):
+            return
+        self.ledger.insert(
+            "",
+            tk.END,
+            iid=item_id,
+            values=(
+                trade.strategy,
+                trade.asset_class,
+                f"{trade.entry_price:.2f}",
+                f"{trade.exit_price:.2f}",
+                f"{trade.pnl:.2f}",
+                trade.exit_reason,
+            ),
+        )
+        self.ledger.see(item_id)
 
     def _redraw_all(self) -> None:
         self._draw_price_chart()
@@ -368,15 +557,16 @@ class BacktestWorkbenchWindow:
         canvas.delete("all")
         width = max(canvas.winfo_width(), 720)
         height = max(canvas.winfo_height(), 360)
-        if not self.bars:
+        bars = self._visible_bars()
+        if not bars:
             canvas.create_text(width / 2, height / 2, text="Load chart history to begin.", fill="#64748b", font=("Segoe UI", 13, "bold"))
             return
         left, right, top, volume_height, bottom = 56, 24, 20, 74, 26
         price_bottom = height - volume_height - bottom
         chart_width = width - left - right
         price_height = price_bottom - top
-        highs = [bar.high for bar in self.bars]
-        lows = [bar.low for bar in self.bars]
+        highs = [bar.high for bar in bars]
+        lows = [bar.low for bar in bars]
         min_price = min(lows)
         max_price = max(highs)
         if max_price <= min_price:
@@ -392,10 +582,10 @@ class BacktestWorkbenchWindow:
             canvas.create_text(left - 8, y, text=f"{price:.2f}", fill="#64748b", anchor=tk.E, font=("Segoe UI", 8))
         canvas.create_line(left, price_bottom, width - right, price_bottom, fill="#94a3b8")
 
-        n = len(self.bars)
+        n = len(bars)
         span = chart_width / max(1, n - 1)
         candle_width = max(2, min(9, span * 0.55))
-        for index, bar in enumerate(self.bars):
+        for index, bar in enumerate(bars):
             x = left + index * span if n > 1 else left + chart_width / 2
             high_y = _scale(bar.high, min_price, max_price, price_bottom, top)
             low_y = _scale(bar.low, min_price, max_price, price_bottom, top)
@@ -417,19 +607,21 @@ class BacktestWorkbenchWindow:
             canvas.create_rectangle(x - candle_width / 2, volume_y, x + candle_width / 2, volume_bottom, fill="#93c5fd", outline="")
 
         if self.result is not None:
-            for trade in self.result.trades:
-                self._draw_trade_marker(canvas, trade, left, span, min_price, max_price, price_bottom, top, trade == highlight)
+            trades = tuple(self.replay_trades) if self.events else self.result.trades
+            for trade in trades:
+                self._draw_trade_marker(canvas, trade, bars, left, span, min_price, max_price, price_bottom, top, trade == highlight)
 
-        first = self.bars[0].timestamp.strftime("%m-%d %H:%M")
-        last = self.bars[-1].timestamp.strftime("%m-%d %H:%M")
+        first = bars[0].timestamp.strftime("%m-%d %H:%M")
+        last = bars[-1].timestamp.strftime("%m-%d %H:%M")
         canvas.create_text(left, height - 8, text=first, fill="#64748b", anchor=tk.W, font=("Segoe UI", 8))
         canvas.create_text(width - right, height - 8, text=last, fill="#64748b", anchor=tk.E, font=("Segoe UI", 8))
-        canvas.create_text(width - right, top, text=f"{self.row.normalized_symbol} {len(self.bars)} bars", fill="#0f172a", anchor=tk.NE, font=("Segoe UI", 9, "bold"))
+        canvas.create_text(width - right, top, text=f"{self.row.normalized_symbol} {len(bars)}/{len(self.bars)} bars", fill="#0f172a", anchor=tk.NE, font=("Segoe UI", 9, "bold"))
 
     def _draw_trade_marker(
         self,
         canvas: tk.Canvas,
         trade: TradeRecord,
+        bars: tuple[Bar, ...],
         left: int,
         span: float,
         min_price: float,
@@ -438,12 +630,12 @@ class BacktestWorkbenchWindow:
         top: int,
         highlight: bool,
     ) -> None:
-        entry_index = _clamped_index(trade.entry_index, len(self.bars))
-        exit_index = _clamped_index(trade.exit_index, len(self.bars))
+        entry_index = _clamped_index(trade.entry_index, len(bars))
+        exit_index = _clamped_index(trade.exit_index, len(bars))
         if entry_index is None or exit_index is None:
             return
-        entry_bar_price = self.bars[entry_index].close if trade.asset_class == "option" else trade.entry_price
-        exit_bar_price = self.bars[exit_index].close if trade.asset_class == "option" else trade.exit_price
+        entry_bar_price = bars[entry_index].close if trade.asset_class == "option" else trade.entry_price
+        exit_bar_price = bars[exit_index].close if trade.asset_class == "option" else trade.exit_price
         entry_x = left + entry_index * span
         exit_x = left + exit_index * span
         entry_y = _scale(entry_bar_price, min_price, max_price, price_bottom, top)
@@ -463,15 +655,16 @@ class BacktestWorkbenchWindow:
         canvas.delete("all")
         width = max(canvas.winfo_width(), 720)
         height = max(canvas.winfo_height(), 120)
-        if not self.bars:
+        bars = self._visible_bars()
+        if not bars:
             canvas.create_text(width / 2, height / 2, text="Equity benchmark appears after loading bars.", fill="#64748b")
             return
-        equity = self.result.equity_curve if self.result else ()
+        equity = tuple(self.replay_equity) if self.events and self.replay_equity else (self.result.equity_curve if self.result else ())
         if not equity:
-            equity = tuple(100.0 + self._buy_hold_return_pct() * (index / max(1, len(self.bars) - 1)) for index in range(len(self.bars)))
+            equity = tuple(100.0 + self._buy_hold_return_pct(bars) * (index / max(1, len(bars) - 1)) for index in range(len(bars)))
         starting_equity = equity[0] if equity else 100.0
-        first_close = self.bars[0].close
-        benchmark = tuple(starting_equity * (bar.close / first_close) for bar in self.bars if first_close)
+        first_close = bars[0].close
+        benchmark = tuple(starting_equity * (bar.close / first_close) for bar in bars if first_close)
         values = list(equity) + list(benchmark)
         if not values:
             return
@@ -522,17 +715,30 @@ class BacktestWorkbenchWindow:
         selected = self.ledger.selection()
         if not selected:
             return
-        trade = self.result.trades[int(selected[0])]
+        source_trades = tuple(self.replay_trades) if self.events else self.result.trades
+        trade_index = int(selected[0])
+        if trade_index >= len(source_trades):
+            return
+        trade = source_trades[trade_index]
         self._draw_price_chart(highlight=trade)
         self.status_var.set(
             f"{trade.strategy}: {trade.asset_class} {trade.quantity} from {trade.entry_price:.2f} to {trade.exit_price:.2f}; "
             f"P/L {trade.pnl:+.2f} ({trade.exit_reason})."
         )
 
-    def _buy_hold_return_pct(self) -> float:
-        if len(self.bars) < 2 or self.bars[0].close <= 0:
+    def _visible_bars(self) -> tuple[Bar, ...]:
+        if not self.events:
+            return self.bars
+        if not self.bars:
+            return ()
+        visible_count = max(1, min(len(self.bars), self.replay_bar_count or 1))
+        return self.bars[:visible_count]
+
+    def _buy_hold_return_pct(self, bars: tuple[Bar, ...] | None = None) -> float:
+        bars = self.bars if bars is None else bars
+        if len(bars) < 2 or bars[0].close <= 0:
             return 0.0
-        return ((self.bars[-1].close - self.bars[0].close) / self.bars[0].close) * 100
+        return ((bars[-1].close - bars[0].close) / bars[0].close) * 100
 
 
 async def _collect_snapshots(config: AppConfig, symbol: str, max_snapshots: int) -> tuple[MarketSnapshot, ...]:
@@ -553,6 +759,15 @@ async def _run_backtest_from_snapshots(
     snapshots: tuple[MarketSnapshot, ...],
     max_hold: int,
 ) -> BacktestResult:
+    return (await _run_backtest_with_events_from_snapshots(config, row, snapshots, max_hold)).result
+
+
+async def _run_backtest_with_events_from_snapshots(
+    config: AppConfig,
+    row: TickerTradeSettings,
+    snapshots: tuple[MarketSnapshot, ...],
+    max_hold: int,
+) -> WorkbenchRun:
     guardrails = GuardrailEngine(config.guardrails)
     broker = PaperBroker(config.guardrails.account_equity)
     recommender = RecommendationEngine(default_strategies(), guardrails)
@@ -566,7 +781,9 @@ async def _run_backtest_from_snapshots(
         BacktestConfig(max_snapshots=len(snapshots), max_hold_snapshots=max_hold),
         recommendation_filter=policy.apply,
     )
-    return await backtest.run(ReplayDataProvider(list(snapshots), delay_seconds=0.0))
+    events: list[BacktestEvent] = []
+    result = await backtest.run(ReplayDataProvider(list(snapshots), delay_seconds=0.0), event_sink=events.append)
+    return WorkbenchRun(result=result, events=tuple(events))
 
 
 def _bar_for_snapshot(snapshot: MarketSnapshot) -> Bar:
