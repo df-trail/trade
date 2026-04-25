@@ -6,6 +6,7 @@ import tkinter as tk
 from queue import Queue
 from tkinter import ttk
 
+from ztrade import __version__
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode
 from ztrade.data.factory import create_data_provider
@@ -32,8 +33,8 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title("zTrade Paper Trading Workstation")
-        self.root.geometry("1120x680")
+        self.root.title(f"zTrade v{__version__} - Paper Trading Workstation")
+        self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
         self.mode_var = tk.StringVar(value=self.config.bot_mode.value)
@@ -47,6 +48,25 @@ class DesktopApp:
         self.root.after(250, self._drain_queue)
 
     def _build_ui(self) -> None:
+        style = ttk.Style(self.root)
+        style.configure("Header.TLabel", font=("Segoe UI", 15, "bold"))
+        style.configure("Subtle.TLabel", foreground="#555555")
+        style.configure("Danger.TLabel", foreground="#9a1b1b")
+
+        header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
+        header.pack(fill=tk.X)
+        ttk.Label(header, text=f"zTrade v{__version__}", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text=(
+                f"Provider: {self.config.data_provider.value} | "
+                f"DB: {self.config.database_path} | "
+                "Live trading disabled"
+            ),
+            style="Subtle.TLabel",
+        ).pack(side=tk.LEFT, padx=(18, 0))
+        ttk.Label(header, text="PAPER MODE", style="Danger.TLabel").pack(side=tk.RIGHT)
+
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill=tk.X)
 
@@ -72,9 +92,9 @@ class DesktopApp:
         recommendations_tab = ttk.Frame(notebook)
         account_tab = ttk.Frame(notebook)
         audit_tab = ttk.Frame(notebook)
-        notebook.add(recommendations_tab, text="Recommendations")
-        notebook.add(account_tab, text="Account")
-        notebook.add(audit_tab, text="Audit")
+        notebook.add(recommendations_tab, text="Recommendations + Trade Review")
+        notebook.add(account_tab, text="Paper Account + Positions")
+        notebook.add(audit_tab, text="SQLite Audit Log")
 
         columns = (
             "status",
@@ -112,7 +132,10 @@ class DesktopApp:
 
         self.details = tk.Text(recommendations_tab, height=7, wrap=tk.WORD)
         self.details.pack(fill=tk.X, pady=(8, 0))
-        self.details.insert("1.0", "Select a recommendation to inspect thesis, guardrails, and trade plan.")
+        self.details.insert(
+            "1.0",
+            "zTrade v0.2 desktop loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+        )
         self.details.configure(state=tk.DISABLED)
 
         account_top = ttk.Frame(account_tab, padding=10)
