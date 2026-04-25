@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.4.0 Advanced Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.4.1 Collapsible Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -242,6 +242,8 @@ The table is currently fed by `DemoDataProvider` in `src/ztrade/data/providers.p
 ## Desktop Settings
 
 The desktop Settings tab is the source of truth for what feeds the recommendations page.
+
+Ticker rows open as compact rollups so the page can show only enabled status, ticker, transaction count, strategy count, and major limits. Use `Expand`, `Collapse`, `Expand All`, and `Collapse All` to expose or hide the deeper transaction and strategy settings.
 
 Each ticker row supports:
 

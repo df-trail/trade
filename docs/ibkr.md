@@ -1,6 +1,31 @@
 # IBKR Integration Notes
 
-IBKR is now the target future broker for zTrade.
+IBKR is now the target broker for zTrade.
+
+## Account Linking Checklist
+
+Use the TWS or IB Gateway API path first. Do not put your IBKR username or password into zTrade; log in through TWS or IB Gateway and let zTrade connect to the local API socket.
+
+1. Install and open Trader Workstation or IB Gateway.
+2. Log in to the IBKR paper trading account first.
+3. In TWS, open Global Configuration, then API, then Settings.
+4. Enable `Enable ActiveX and Socket Clients`.
+5. For the first pricing test, keep API `Read-Only` enabled. It blocks API orders but still lets us validate connectivity and market data.
+6. When we are ready for paper order testing, disable `Read-Only` in the paper session only.
+7. Use matching socket ports:
+   - TWS paper: `7497`
+   - TWS live: `7496`
+   - IB Gateway paper: `4002`
+   - IB Gateway live: `4001`
+8. Keep host as `127.0.0.1` when zTrade and TWS/Gateway are on the same machine.
+9. Use a unique `IBKR_CLIENT_ID` if another API tool is also connected.
+10. Keep `IBKR_LIVE_TRADING_ENABLED=false`.
+
+For market data, complete the Market Data API acknowledgement in Client Portal and confirm subscriptions/permissions for the instruments you want. U.S. stock and options data generally requires appropriate Level 1 subscriptions; OPRA is the common U.S. options data subscription, and options Greeks require underlying and derivative market data permissions.
+
+zTrade does not need your login credentials. The `.env` file should only hold connection settings such as account id, host, port, client id, and the live-trading kill switch.
+
+Current zTrade status: the app still defaults to `PaperBroker`. The next IBKR implementation step is a connection-health panel and read-only pricing provider, followed by paper order preview and paper order placement.
 
 ## Candidate API Paths
 

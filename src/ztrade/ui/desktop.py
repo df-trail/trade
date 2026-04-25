@@ -30,8 +30,9 @@ from ztrade.strategies.registry import default_strategies
 
 
 class SettingsRowWidgets:
-    def __init__(self, row_id: int, settings: TickerTradeSettings) -> None:
+    def __init__(self, row_id: int, settings: TickerTradeSettings, expanded: bool = False) -> None:
         self.row_id = row_id
+        self.expanded = tk.BooleanVar(value=expanded)
         self.symbol = tk.StringVar(value=settings.normalized_symbol)
         self.enabled = tk.BooleanVar(value=settings.enabled)
         self.trade_shares = tk.BooleanVar(value=settings.trade_shares)
@@ -62,6 +63,9 @@ class SettingsRowWidgets:
         self.max_trades_per_day = tk.StringVar(value=str(settings.max_trades_per_day))
         self.max_option_contracts = tk.StringVar(value=str(settings.max_option_contracts))
         self.min_confidence = tk.StringVar(value=f"{settings.min_confidence:.2f}")
+        self.summary = tk.StringVar()
+        self.details_frame: tk.Frame | None = None
+        self.toggle_button: tk.Button | None = None
 
     def to_settings(self) -> TickerTradeSettings:
         symbol = self.symbol.get().strip().upper()
@@ -156,7 +160,7 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} Advanced Settings Build - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} Collapsible Settings Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -199,7 +203,7 @@ class DesktopApp:
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__} Advanced Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} Collapsible Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -282,7 +286,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            f"zTrade v{__version__} Advanced Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} Collapsible Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -319,7 +323,7 @@ class DesktopApp:
         self._build_settings_tab(settings_tab)
         if not self.has_saved_settings:
             self.notebook.select(settings_tab)
-            self.status_var.set("Advanced Settings Build loaded. Configure tickers, then click Save + Apply.")
+            self.status_var.set("Collapsible Settings Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -394,6 +398,8 @@ class DesktopApp:
         ttk.Button(toolbar, text="Add Ticker Row", command=self._add_settings_row, style="Accent.TButton").pack(side=tk.LEFT)
         ttk.Button(toolbar, text="Save + Apply", command=self._save_settings, style="Accent.TButton").pack(side=tk.LEFT, padx=8)
         ttk.Button(toolbar, text="Reset Defaults", command=self._reset_settings_defaults).pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="Expand All", command=self._expand_all_settings_rows).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(toolbar, text="Collapse All", command=self._collapse_all_settings_rows).pack(side=tk.LEFT, padx=(8, 0))
         self.settings_status_var = tk.StringVar(value=f"{len(self.trading_settings.tickers)} ticker rows loaded")
         ttk.Label(
             toolbar,
@@ -409,7 +415,11 @@ class DesktopApp:
             "<Configure>",
             lambda _event: self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all")),
         )
-        self.settings_canvas.create_window((0, 0), window=self.settings_frame, anchor="nw")
+        self.settings_window = self.settings_canvas.create_window((0, 0), window=self.settings_frame, anchor="nw")
+        self.settings_canvas.bind(
+            "<Configure>",
+            lambda event: self.settings_canvas.itemconfigure(self.settings_window, width=event.width),
+        )
         self.settings_canvas.configure(yscrollcommand=scrollbar.set)
         self.settings_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -430,7 +440,9 @@ class DesktopApp:
         row_widgets = SettingsRowWidgets(
             self._settings_row_id,
             settings or TickerTradeSettings(symbol=""),
+            expanded=settings is None,
         )
+        row_widgets.summary.set(self._settings_summary(row_widgets))
         self.settings_rows.append(row_widgets)
         card = tk.Frame(
             self.settings_frame,
@@ -444,19 +456,35 @@ class DesktopApp:
 
         top = tk.Frame(card, background=self.palette["panel"])
         top.pack(fill=tk.X)
+        toggle_button = tk.Button(top, text="Collapse" if row_widgets.expanded.get() else "Expand", width=9)
+        toggle_button.pack(side=tk.LEFT, padx=(0, 8))
+        row_widgets.toggle_button = toggle_button
         tk.Checkbutton(top, text="Enabled", variable=row_widgets.enabled, background=self.palette["panel"]).pack(side=tk.LEFT)
         tk.Label(top, text="Ticker", background=self.palette["panel"], foreground=self.palette["text"], font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(14, 4))
         tk.Entry(top, textvariable=row_widgets.symbol, width=10).pack(side=tk.LEFT)
+        tk.Label(
+            top,
+            textvariable=row_widgets.summary,
+            background=self.palette["panel"],
+            foreground=self.palette["muted"],
+        ).pack(side=tk.LEFT, padx=(16, 0))
         tk.Button(top, text="Delete Row", command=lambda target=row_widgets: self._delete_settings_row(target)).pack(side=tk.RIGHT)
 
-        limits = tk.Frame(card, background=self.palette["panel"])
+        details = tk.Frame(card, background=self.palette["panel"])
+        row_widgets.details_frame = details
+        if row_widgets.expanded.get():
+            details.pack(fill=tk.X, pady=(8, 0))
+        toggle_button.configure(command=lambda target=row_widgets: self._toggle_settings_details(target))
+        self._bind_settings_summary(row_widgets)
+
+        limits = tk.Frame(details, background=self.palette["panel"])
         limits.pack(fill=tk.X, pady=(8, 4))
         self._field(limits, "Max position %", row_widgets.max_position_pct, "Maximum account-equity percentage this ticker may use per recommendation.").pack(side=tk.LEFT, padx=(0, 12))
         self._field(limits, "Max trades/day", row_widgets.max_trades_per_day, "Maximum recommendations allowed for this ticker per day in this app session.").pack(side=tk.LEFT, padx=(0, 12))
         self._field(limits, "Max contracts", row_widgets.max_option_contracts, "Maximum option contracts allowed for this ticker recommendation.").pack(side=tk.LEFT, padx=(0, 12))
         self._field(limits, "Min confidence", row_widgets.min_confidence, "Ticker-level minimum confidence required before a recommendation reaches the main page.").pack(side=tk.LEFT)
 
-        transactions = tk.Frame(card, background=self.palette["panel"])
+        transactions = tk.Frame(details, background=self.palette["panel"])
         transactions.pack(fill=tk.X, pady=(8, 4))
         for group, items in TRANSACTION_GROUPS.items():
             group_frame = tk.LabelFrame(
@@ -482,7 +510,7 @@ class DesktopApp:
                 ToolTip(check, item.description)
 
         strategies = tk.LabelFrame(
-            card,
+            details,
             text="Strategy Settings",
             background=self.palette["panel"],
             foreground=self.palette["text"],
@@ -510,6 +538,8 @@ class DesktopApp:
             self._mini_field(strategy_card, "Min", row_widgets.strategy_min_confidence[strategy], 1)
             self._mini_field(strategy_card, "Max%", row_widgets.strategy_position_pct[strategy], 2)
             self._mini_field(strategy_card, "Trades", row_widgets.strategy_max_trades[strategy], 3)
+        if hasattr(self, "settings_status_var"):
+            self.settings_status_var.set(f"{len(self.settings_rows)} ticker rows loaded")
 
     def _field(self, parent: tk.Widget, label: str, variable: tk.StringVar, tooltip: str) -> tk.Frame:
         frame = tk.Frame(parent, background=self.palette["panel"])
@@ -522,6 +552,60 @@ class DesktopApp:
     def _mini_field(self, parent: tk.Widget, label: str, variable: tk.StringVar, column: int) -> None:
         tk.Label(parent, text=label, background="#ffffff", foreground=self.palette["muted"]).grid(row=1, column=(column - 1) * 2, sticky=tk.W, padx=(0, 3))
         tk.Entry(parent, textvariable=variable, width=6).grid(row=1, column=(column - 1) * 2 + 1, sticky=tk.W, padx=(0, 8))
+
+    def _settings_summary(self, row_widgets: SettingsRowWidgets) -> str:
+        enabled = "enabled" if row_widgets.enabled.get() else "disabled"
+        transactions = sum(1 for value in row_widgets.transaction_vars.values() if value.get())
+        strategies = sum(1 for value in row_widgets.strategy_vars.values() if value.get())
+        return (
+            f"{enabled} | {transactions} transaction types | {strategies} strategies | "
+            f"max {row_widgets.max_position_pct.get()}% | {row_widgets.max_trades_per_day.get()}/day | "
+            f"{row_widgets.max_option_contracts.get()} contracts | min {row_widgets.min_confidence.get()}"
+        )
+
+    def _bind_settings_summary(self, row_widgets: SettingsRowWidgets) -> None:
+        variables: list[tk.Variable] = [
+            row_widgets.enabled,
+            row_widgets.max_position_pct,
+            row_widgets.max_trades_per_day,
+            row_widgets.max_option_contracts,
+            row_widgets.min_confidence,
+        ]
+        variables.extend(row_widgets.transaction_vars.values())
+        variables.extend(row_widgets.strategy_vars.values())
+        for variable in variables:
+            variable.trace_add(
+                "write",
+                lambda *_args, target=row_widgets: target.summary.set(self._settings_summary(target)),
+            )
+
+    def _toggle_settings_details(self, row_widgets: SettingsRowWidgets) -> None:
+        self._set_settings_row_expanded(row_widgets, not row_widgets.expanded.get())
+
+    def _set_settings_row_expanded(self, row_widgets: SettingsRowWidgets, expanded: bool) -> None:
+        row_widgets.expanded.set(expanded)
+        if row_widgets.details_frame is None or row_widgets.toggle_button is None:
+            return
+        if expanded:
+            if not row_widgets.details_frame.winfo_manager():
+                row_widgets.details_frame.pack(fill=tk.X, pady=(8, 0))
+            row_widgets.toggle_button.configure(text="Collapse")
+        else:
+            row_widgets.details_frame.pack_forget()
+            row_widgets.toggle_button.configure(text="Expand")
+        row_widgets.summary.set(self._settings_summary(row_widgets))
+        if hasattr(self, "settings_canvas"):
+            self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all"))
+
+    def _expand_all_settings_rows(self) -> None:
+        for row_widgets in self.settings_rows:
+            self._set_settings_row_expanded(row_widgets, True)
+        self.settings_status_var.set(f"{len(self.settings_rows)} ticker rows expanded")
+
+    def _collapse_all_settings_rows(self) -> None:
+        for row_widgets in self.settings_rows:
+            self._set_settings_row_expanded(row_widgets, False)
+        self.settings_status_var.set(f"{len(self.settings_rows)} ticker rows collapsed")
 
     def _delete_settings_row(self, target: SettingsRowWidgets) -> None:
         settings = TradingSettings(
