@@ -35,7 +35,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("options_flow_momentum", strategies)
 
     def test_demo_backtest_closes_trades(self) -> None:
-        async def run() -> tuple[int, int, float]:
+        async def run() -> tuple[int, int, float, bool]:
             config = AppConfig()
             guardrails = GuardrailEngine(config.guardrails)
             broker = PaperBroker(config.guardrails.account_equity)
@@ -49,12 +49,20 @@ class PipelineTests(unittest.TestCase):
                 BacktestConfig(max_snapshots=60, max_hold_snapshots=8),
             )
             result = await backtest.run(create_data_provider(config))
-            return len(result.recommendations), len(result.trades), result.report.ending_equity
+            has_trade_metadata = all(
+                trade.entry_index is not None
+                and trade.exit_index is not None
+                and trade.entry_timestamp is not None
+                and trade.exit_timestamp is not None
+                for trade in result.trades
+            )
+            return len(result.recommendations), len(result.trades), result.report.ending_equity, has_trade_metadata
 
-        recommendations, trades, equity = asyncio.run(run())
+        recommendations, trades, equity, has_trade_metadata = asyncio.run(run())
         self.assertGreater(recommendations, 0)
         self.assertGreater(trades, 0)
         self.assertGreater(equity, 0)
+        self.assertTrue(has_trade_metadata)
 
     def test_backtest_can_filter_recommendations(self) -> None:
         async def run() -> int:

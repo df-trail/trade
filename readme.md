@@ -176,7 +176,7 @@ The scaffold includes:
 - IBKR adapter placeholder.
 - Desktop UI with recommendation, account/positions, and audit tabs.
 - Settings tab for per-ticker instruments, strategy selection, and trade limits.
-- Backtest replay engine with stop/target/max-hold/end-of-test exits and performance reporting.
+- Backtest replay engine with stop/target/max-hold/end-of-test exits, performance reporting, and a visual ticker Workbench.
 
 Runtime state is stored in `data/ztrade.sqlite3` by default and is intentionally ignored by Git.
 Per-ticker UI settings are stored in `data/settings.json` and are intentionally ignored by Git.
@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.4.4 IBKR Data Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.5.0 Backtest Workbench Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -262,7 +262,7 @@ The desktop Settings tab is the source of truth for what feeds the recommendatio
 
 Ticker rows open as compact rollups so the page can show only enabled status, ticker, transaction count, strategy count, and major limits. Use `Expand`, `Collapse`, `Expand All`, and `Collapse All` to expose or hide the deeper transaction and strategy settings.
 
-The Settings tab also includes `Backtest Individual Tickers`. Choose `demo`, `csv_replay`, or `ibkr_historical`, set snapshot/max-hold limits, then click the `Backtest` button on the ticker row you want to test. The backtest runs that ticker setup by itself and applies the same ticker, transaction, strategy, confidence, and sizing settings used by the recommendation feed.
+The Settings tab also includes a `Backtest Workbench` launcher. Choose `demo`, `csv_replay`, or `ibkr_historical`, set snapshot/max-hold defaults, then click the `Backtest` button on the ticker row you want to test. A separate Workbench window opens for that ticker with source, bar-size, duration, RTH, chart, metrics, equity-vs-underlying, and trade-ledger controls. The Workbench applies the same ticker, transaction, strategy, confidence, and sizing settings used by the recommendation feed.
 
 Each ticker row supports:
 

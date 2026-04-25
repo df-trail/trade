@@ -29,6 +29,7 @@ from ztrade.settings import (
 )
 from ztrade.storage.sqlite import TradingStore
 from ztrade.strategies.registry import default_strategies
+from ztrade.ui.backtest_workbench import BacktestWorkbenchWindow, WorkbenchDefaults
 
 
 class SettingsRowWidgets:
@@ -163,7 +164,7 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} IBKR Data Build - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} Backtest Workbench Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -175,7 +176,7 @@ class DesktopApp:
         self.backtest_csv_path_var = tk.StringVar(value="")
         self.backtest_snapshots_var = tk.StringVar(value="120")
         self.backtest_max_hold_var = tk.StringVar(value="20")
-        self.backtest_status_var = tk.StringVar(value="Click Backtest on an individual ticker row.")
+        self.backtest_status_var = tk.StringVar(value="Click Backtest on a ticker row to open the Workbench.")
         self.feed_provider_var = tk.StringVar(value=self.config.data_provider.value)
         self._build_ui()
 
@@ -213,7 +214,7 @@ class DesktopApp:
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__} IBKR Data Build", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} Backtest Workbench Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -311,7 +312,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            f"zTrade v{__version__} IBKR Data Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} Backtest Workbench Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -353,7 +354,7 @@ class DesktopApp:
         self._build_settings_tab(settings_tab)
         if not self.has_saved_settings:
             self.notebook.select(settings_tab)
-            self.status_var.set("IBKR Data Build loaded. Configure tickers, then click Save + Apply.")
+            self.status_var.set("Backtest Workbench Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -488,7 +489,7 @@ class DesktopApp:
         controls.pack(fill=tk.X)
         tk.Label(
             controls,
-            text="Backtest Individual Tickers",
+            text="Backtest Workbench",
             background=self.palette["panel"],
             foreground=self.palette["text"],
             font=("Segoe UI", 10, "bold"),
@@ -502,7 +503,7 @@ class DesktopApp:
             width=16,
         )
         source.pack(side=tk.LEFT, padx=(4, 12))
-        self._field(controls, "Snapshots", self.backtest_snapshots_var, "Maximum snapshots to replay for the selected ticker.").pack(side=tk.LEFT, padx=(0, 12))
+        self._field(controls, "Snapshots", self.backtest_snapshots_var, "Maximum snapshots to load into a ticker Workbench.").pack(side=tk.LEFT, padx=(0, 12))
         self._field(controls, "Max hold", self.backtest_max_hold_var, "Maximum snapshots to hold a simulated position before closing.").pack(side=tk.LEFT, padx=(0, 12))
         ttk.Button(controls, text="Clear Results", command=self._clear_backtest_results).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(controls, textvariable=self.backtest_status_var, style="Subtle.TLabel").pack(side=tk.LEFT, padx=(8, 0))
@@ -743,14 +744,36 @@ class DesktopApp:
             return
         max_snapshots = max(1, _parse_int(self.backtest_snapshots_var.get(), 120))
         max_hold = max(1, _parse_int(self.backtest_max_hold_var.get(), 20))
-        self.backtest_status_var.set(f"Running {row.normalized_symbol} backtest...")
-        self.status_var.set(f"Backtesting {row.normalized_symbol} with its current ticker/strategy limits.")
-        thread = threading.Thread(
-            target=self._run_single_settings_backtest,
-            args=(row, provider_kind, csv_path, max_snapshots, max_hold),
-            daemon=True,
+        BacktestWorkbenchWindow(
+            self.root,
+            row,
+            WorkbenchDefaults(
+                provider_kind=provider_kind,
+                csv_path=csv_path,
+                max_snapshots=max_snapshots,
+                max_hold=max_hold,
+            ),
+            on_complete=self._record_backtest_result,
         )
-        thread.start()
+        self.backtest_status_var.set(f"Opened {row.normalized_symbol} Backtest Workbench.")
+        self.status_var.set(f"Backtest Workbench opened for {row.normalized_symbol}. Configure and click Execute Backtest.")
+
+    def _record_backtest_result(self, row: TickerTradeSettings, result: object) -> None:
+        report = result.report
+        values = (
+            row.normalized_symbol,
+            str(len(row.strategies)),
+            str(report.total_recommendations),
+            str(report.total_fills),
+            str(report.closed_trades),
+            f"{report.win_rate:.2f}",
+            f"{report.return_pct:.3f}",
+            f"{report.realized_pnl:.2f}",
+            f"{report.max_drawdown_pct:.3f}",
+            f"{report.ending_equity:.2f}",
+        )
+        self.backtest_tree.insert("", tk.END, values=values)
+        self.backtest_status_var.set(f"{row.normalized_symbol} workbench run complete.")
 
     def _run_single_settings_backtest(
         self,

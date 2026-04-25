@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from statistics import mean
 
 
@@ -15,6 +16,10 @@ class TradeRecord:
     pnl: float
     pnl_pct: float
     exit_reason: str
+    entry_index: int | None = None
+    exit_index: int | None = None
+    entry_timestamp: datetime | None = None
+    exit_timestamp: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

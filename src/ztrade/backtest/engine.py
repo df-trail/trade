@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from ztrade.analytics.performance import PerformanceReport, TradeRecord, build_performance_report
 from ztrade.brokers.paper import PaperBroker
@@ -24,6 +25,7 @@ class OpenTrade:
     recommendation: Recommendation
     entry_fill: Fill
     opened_index: int
+    opened_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,7 @@ class BacktestResult:
     recommendations: tuple[Recommendation, ...]
     fills: tuple[Fill, ...]
     trades: tuple[TradeRecord, ...]
+    equity_curve: tuple[float, ...]
     report: PerformanceReport
 
 
@@ -63,12 +66,14 @@ class BacktestEngine:
         closed_trades: list[TradeRecord] = []
         open_trades: list[OpenTrade] = []
         last_snapshot_by_symbol: dict[str, MarketSnapshot] = {}
+        last_index_by_symbol: dict[str, int] = {}
         equity_curve: list[float] = [self._paper_broker.account_state().equity]
 
         snapshot_index = 0
         async for snapshot in snapshots:
             snapshot_index += 1
             last_snapshot_by_symbol[snapshot.symbol] = snapshot
+            last_index_by_symbol[snapshot.symbol] = snapshot_index
             exit_fills, trade_records = await self._process_exits(snapshot, open_trades, snapshot_index)
             fills.extend(exit_fills)
             closed_trades.extend(trade_records)
@@ -83,14 +88,21 @@ class BacktestEngine:
                 if fill is None:
                     continue
                 fills.append(fill)
-                open_trades.append(OpenTrade(recommendation=recommendation, entry_fill=fill, opened_index=snapshot_index))
+                open_trades.append(
+                    OpenTrade(
+                        recommendation=recommendation,
+                        entry_fill=fill,
+                        opened_index=snapshot_index,
+                        opened_at=snapshot.quote.timestamp,
+                    )
+                )
 
             equity_curve.append(self._paper_broker.account_state().equity)
             if self._backtest_config.max_snapshots and snapshot_index >= self._backtest_config.max_snapshots:
                 break
 
         if self._backtest_config.close_at_end:
-            exit_fills, trade_records = await self._close_all(open_trades, last_snapshot_by_symbol)
+            exit_fills, trade_records = await self._close_all(open_trades, last_snapshot_by_symbol, last_index_by_symbol)
             fills.extend(exit_fills)
             closed_trades.extend(trade_records)
             equity_curve.append(self._paper_broker.account_state().equity)
@@ -110,6 +122,7 @@ class BacktestEngine:
             recommendations=tuple(recommendations),
             fills=tuple(fills),
             trades=tuple(closed_trades),
+            equity_curve=tuple(equity_curve),
             report=report,
         )
 
@@ -135,7 +148,7 @@ class BacktestEngine:
                 continue
             fill = await self._sell(trade, price)
             fills.append(fill)
-            records.append(_trade_record(trade, fill, exit_reason))
+            records.append(_trade_record(trade, fill, exit_reason, snapshot_index, snapshot.quote.timestamp))
         open_trades[:] = remaining
         return fills, records
 
@@ -143,13 +156,17 @@ class BacktestEngine:
         self,
         open_trades: list[OpenTrade],
         last_snapshot_by_symbol: dict[str, MarketSnapshot],
+        last_index_by_symbol: dict[str, int],
     ) -> tuple[list[Fill], list[TradeRecord]]:
         fills: list[Fill] = []
         records: list[TradeRecord] = []
         for trade in list(open_trades):
-            snapshot = last_snapshot_by_symbol.get(trade.recommendation.idea.option_contract.underlying) if (
-                trade.recommendation.idea.option_contract
-            ) else last_snapshot_by_symbol.get(trade.recommendation.idea.symbol)
+            symbol = (
+                trade.recommendation.idea.option_contract.underlying
+                if trade.recommendation.idea.option_contract
+                else trade.recommendation.idea.symbol
+            )
+            snapshot = last_snapshot_by_symbol.get(symbol)
             if snapshot is None:
                 continue
             price = _exit_price_for_snapshot(snapshot, trade.recommendation.idea)
@@ -157,7 +174,15 @@ class BacktestEngine:
                 continue
             fill = await self._sell(trade, price)
             fills.append(fill)
-            records.append(_trade_record(trade, fill, "end_of_backtest"))
+            records.append(
+                _trade_record(
+                    trade,
+                    fill,
+                    "end_of_backtest",
+                    last_index_by_symbol.get(symbol),
+                    snapshot.quote.timestamp,
+                )
+            )
             open_trades.remove(trade)
         return fills, records
 
@@ -207,7 +232,13 @@ def _exit_reason(idea: TradeIdea, price: float) -> str | None:
     return None
 
 
-def _trade_record(open_trade: OpenTrade, exit_fill: Fill, exit_reason: str) -> TradeRecord:
+def _trade_record(
+    open_trade: OpenTrade,
+    exit_fill: Fill,
+    exit_reason: str,
+    exit_index: int | None,
+    exit_timestamp: datetime | None,
+) -> TradeRecord:
     entry = open_trade.entry_fill
     multiplier = 100 if entry.order.asset_class == AssetClass.OPTION else 1
     pnl = (exit_fill.price - entry.price) * entry.quantity * multiplier
@@ -222,6 +253,10 @@ def _trade_record(open_trade: OpenTrade, exit_fill: Fill, exit_reason: str) -> T
         pnl=round(pnl, 2),
         pnl_pct=round(pnl_pct, 3),
         exit_reason=exit_reason,
+        entry_index=open_trade.opened_index,
+        exit_index=exit_index,
+        entry_timestamp=open_trade.opened_at,
+        exit_timestamp=exit_timestamp,
     )
 
 

@@ -487,11 +487,11 @@ Live trading, backtesting, and datamining should share:
 
 ### Phase 1: Workbench Shell
 
-- Add Backtest Workbench window.
-- Launch it from individual Settings ticker rows.
-- Load demo, csv, or IBKR historical bars.
-- Show ticker, source, date range, bar size, and strategy controls.
-- Display a basic price chart and volume panel.
+- Add Backtest Workbench window. Implemented in `zTrade v0.5.0`.
+- Launch it from individual Settings ticker rows. Implemented in `zTrade v0.5.0`.
+- Load demo, csv, or IBKR historical bars. Implemented in `zTrade v0.5.0`.
+- Show ticker, source, bar size, IBKR duration, RTH mode, and run controls. Implemented in `zTrade v0.5.0`.
+- Display a basic price chart and volume panel. Implemented in `zTrade v0.5.0`.
 - Keep existing row-level quick backtest as a fallback if needed.
 
 ### Phase 2: Stepwise Backtest Runner
@@ -503,9 +503,9 @@ Live trading, backtesting, and datamining should share:
 
 ### Phase 3: Trade Overlays And Ledger
 
-- Add entry and exit markers to the chart.
+- Add entry and exit markers to the chart. Initial marker overlay implemented in `zTrade v0.5.0`.
 - Show stop and target overlays.
-- Add trade ledger.
+- Add trade ledger. Implemented in `zTrade v0.5.0`.
 - Add signal/guardrail event log.
 - Clicking a trade focuses the chart.
 
