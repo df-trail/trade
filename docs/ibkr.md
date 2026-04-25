@@ -21,11 +21,13 @@ Use the TWS or IB Gateway API path first. Do not put your IBKR username or passw
 9. Use a unique `IBKR_CLIENT_ID` if another API tool is also connected.
 10. Keep `IBKR_LIVE_TRADING_ENABLED=false`.
 
+Your screenshot shows `Enable ActiveX and Socket Clients` enabled, `Read-Only API` enabled, and socket port `7496`. That is safe for a first read-only connection check, but `7496` is the usual TWS live-session port. If you intend to use paper TWS, either switch TWS to the paper login/default `7497`, or set local `.env` to `IBKR_PORT=7496` while keeping `IBKR_LIVE_TRADING_ENABLED=false`.
+
 For market data, complete the Market Data API acknowledgement in Client Portal and confirm subscriptions/permissions for the instruments you want. U.S. stock and options data generally requires appropriate Level 1 subscriptions; OPRA is the common U.S. options data subscription, and options Greeks require underlying and derivative market data permissions.
 
 zTrade does not need your login credentials. The `.env` file should only hold connection settings such as account id, host, port, client id, and the live-trading kill switch.
 
-Current zTrade status: the app still defaults to `PaperBroker`. The next IBKR implementation step is a connection-health panel and read-only pricing provider, followed by paper order preview and paper order placement.
+Current zTrade status: the app still defaults to `PaperBroker`. The desktop account tab now has a `Check IBKR` button that validates whether the local API socket is reachable. The next IBKR implementation step is a read-only pricing provider, followed by contract lookup, paper order preview, and paper order placement.
 
 ## Candidate API Paths
 

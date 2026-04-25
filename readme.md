@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.4.1 Collapsible Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.4.2 IBKR Health Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -238,6 +238,17 @@ Tradier option-chain normalization is available through `TradierOptionsClient` a
 ## Demo Data Source
 
 The table is currently fed by `DemoDataProvider` in `src/ztrade/data/providers.py`. It emits deterministic fake stock quotes, option quotes, and occasional demo news items for the default watchlist so the UI, recommendation engine, guardrails, paper broker, and audit log can be tested before real provider credentials are added.
+
+## IBKR Connection Check
+
+The Account tab includes `Check IBKR`, which tests whether zTrade can reach the local TWS or IB Gateway API socket from `.env`.
+
+- TWS paper usually uses `IBKR_PORT=7497`.
+- TWS live usually uses `IBKR_PORT=7496`.
+- IB Gateway paper usually uses `IBKR_PORT=4002`.
+- IB Gateway live usually uses `IBKR_PORT=4001`.
+
+If TWS shows socket port `7496`, set `IBKR_PORT=7496` locally for read-only pricing checks or switch to the paper TWS session/port before order testing. Keep `IBKR_LIVE_TRADING_ENABLED=false`. zTrade does not need an IBKR username or password; log in through TWS or IB Gateway.
 
 ## Desktop Settings
 

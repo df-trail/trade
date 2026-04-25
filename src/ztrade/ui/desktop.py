@@ -7,6 +7,7 @@ from queue import Queue
 from tkinter import ttk
 
 from ztrade import __version__
+from ztrade.brokers.ibkr import IbkrBroker, IbkrConnectionConfig, IbkrConnectionHealth
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode
 from ztrade.data.factory import create_data_provider
@@ -148,6 +149,7 @@ class DesktopApp:
         self.store = TradingStore(self.config.database_path)
         self.store.initialize()
         self.guardrails = GuardrailEngine(self.config.guardrails)
+        self.ibkr_broker = IbkrBroker(IbkrConnectionConfig.from_env())
         self.broker = PaperBroker(self.config.guardrails.account_equity, store=self.store)
         self.execution = ExecutionEngine(self.config, self.broker, self.guardrails, store=self.store)
         self.recommender = RecommendationEngine(default_strategies(), self.guardrails)
@@ -160,13 +162,14 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} Collapsible Settings Build - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} IBKR Health Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
         self.mode_var = tk.StringVar(value=self.config.bot_mode.value)
         self.status_var = tk.StringVar(value=self._account_message())
         self.account_var = tk.StringVar(value=self._account_message())
+        self.ibkr_status_var = tk.StringVar(value=self._ibkr_config_message())
         self._build_ui()
 
         self._stop_event = threading.Event()
@@ -203,7 +206,7 @@ class DesktopApp:
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__} Collapsible Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} IBKR Health Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -286,7 +289,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            f"zTrade v{__version__} Collapsible Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} IBKR Health Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -294,6 +297,11 @@ class DesktopApp:
         account_top.pack(fill=tk.X)
         ttk.Label(account_top, textvariable=self.account_var).pack(side=tk.LEFT)
         ttk.Button(account_top, text="Refresh Account", command=self._refresh_account).pack(side=tk.RIGHT)
+
+        ibkr_top = ttk.Frame(account_tab, padding=(10, 0, 10, 10))
+        ibkr_top.pack(fill=tk.X)
+        ttk.Label(ibkr_top, textvariable=self.ibkr_status_var).pack(side=tk.LEFT)
+        ttk.Button(ibkr_top, text="Check IBKR", command=self._check_ibkr_connection).pack(side=tk.RIGHT)
 
         position_columns = ("symbol", "asset", "quantity", "avg_price", "cost_basis", "realized_pnl")
         self.positions_tree = ttk.Treeview(account_tab, columns=position_columns, show="headings", height=12)
@@ -323,7 +331,7 @@ class DesktopApp:
         self._build_settings_tab(settings_tab)
         if not self.has_saved_settings:
             self.notebook.select(settings_tab)
-            self.status_var.set("Collapsible Settings Build loaded. Configure tickers, then click Save + Apply.")
+            self.status_var.set("IBKR Health Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -741,6 +749,27 @@ class DesktopApp:
                     f"{position.realized_pnl:.2f}",
                 ),
             )
+
+    def _ibkr_config_message(self) -> str:
+        cfg = self.ibkr_broker.config
+        session_hint = "live-port" if cfg.port in {7496, 4001} else "paper-port"
+        return f"IBKR not checked. Target {cfg.host}:{cfg.port} client {cfg.client_id} ({session_hint}); live orders disabled."
+
+    def _check_ibkr_connection(self) -> None:
+        self.ibkr_status_var.set("Checking IBKR API socket...")
+        self.status_var.set("Checking IBKR API socket. Keep Read-Only API enabled for this first test.")
+        thread = threading.Thread(target=self._run_ibkr_connection_check, daemon=True)
+        thread.start()
+
+    def _run_ibkr_connection_check(self) -> None:
+        health = self.ibkr_broker.check_connection(timeout_seconds=1.5)
+        self.root.after(0, lambda result=health: self._show_ibkr_connection_health(result))
+
+    def _show_ibkr_connection_health(self, health: IbkrConnectionHealth) -> None:
+        prefix = "IBKR connected" if health.ok else "IBKR not reachable"
+        latency = f" | {health.latency_ms:.1f} ms" if health.latency_ms is not None else ""
+        self.ibkr_status_var.set(f"{prefix}: {health.host}:{health.port}{latency}. {health.message}")
+        self.status_var.set(health.message)
 
     def _refresh_audit(self) -> None:
         for item_id in self.audit_tree.get_children(""):
