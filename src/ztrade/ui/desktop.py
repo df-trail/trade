@@ -16,9 +16,12 @@ from ztrade.models import Fill, Recommendation, RecommendationStatus
 from ztrade.recommendations.engine import RecommendationEngine
 from ztrade.risk.guardrails import GuardrailEngine
 from ztrade.settings import (
+    STRATEGY_DESCRIPTIONS,
     STRATEGY_LABELS,
+    TRANSACTION_GROUPS,
     RecommendationSettingsPolicy,
     SettingsStore,
+    StrategySettings,
     TickerTradeSettings,
     TradingSettings,
 )
@@ -34,8 +37,25 @@ class SettingsRowWidgets:
         self.trade_shares = tk.BooleanVar(value=settings.trade_shares)
         self.trade_simple = tk.BooleanVar(value=settings.trade_simple)
         self.trade_complex = tk.BooleanVar(value=settings.trade_complex)
+        self.transaction_vars = {
+            item.key: tk.BooleanVar(value=item.key in settings.allowed_transactions)
+            for items in TRANSACTION_GROUPS.values()
+            for item in items
+        }
         self.strategy_vars = {
-            strategy: tk.BooleanVar(value=strategy in settings.strategies)
+            strategy: tk.BooleanVar(value=settings.setting_for_strategy(strategy).enabled)
+            for strategy in STRATEGY_LABELS
+        }
+        self.strategy_min_confidence = {
+            strategy: tk.StringVar(value=f"{settings.setting_for_strategy(strategy).min_confidence:.2f}")
+            for strategy in STRATEGY_LABELS
+        }
+        self.strategy_position_pct = {
+            strategy: tk.StringVar(value=f"{settings.setting_for_strategy(strategy).max_position_fraction * 100:.1f}")
+            for strategy in STRATEGY_LABELS
+        }
+        self.strategy_max_trades = {
+            strategy: tk.StringVar(value=str(settings.setting_for_strategy(strategy).max_trades_per_day))
             for strategy in STRATEGY_LABELS
         }
         self.max_position_pct = tk.StringVar(value=f"{settings.max_position_fraction * 100:.1f}")
@@ -46,18 +66,71 @@ class SettingsRowWidgets:
     def to_settings(self) -> TickerTradeSettings:
         symbol = self.symbol.get().strip().upper()
         strategies = tuple(strategy for strategy, value in self.strategy_vars.items() if value.get())
+        allowed_transactions = tuple(
+            transaction for transaction, value in self.transaction_vars.items() if value.get()
+        )
+        share_keys = {item.key for item in TRANSACTION_GROUPS["Share Trades"]}
+        simple_keys = {item.key for item in TRANSACTION_GROUPS["Simple Options"]}
+        complex_keys = {item.key for item in TRANSACTION_GROUPS["Complex Options"]}
+        strategy_settings = {
+            strategy: StrategySettings(
+                enabled=self.strategy_vars[strategy].get(),
+                min_confidence=min(1.0, max(0.0, _parse_float(self.strategy_min_confidence[strategy].get(), 0.55))),
+                max_position_fraction=max(0.0, _parse_float(self.strategy_position_pct[strategy].get(), 10.0) / 100),
+                max_trades_per_day=max(0, _parse_int(self.strategy_max_trades[strategy].get(), 3)),
+            )
+            for strategy in STRATEGY_LABELS
+        }
         return TickerTradeSettings(
             symbol=symbol,
             enabled=self.enabled.get(),
-            trade_shares=self.trade_shares.get(),
-            trade_simple=self.trade_simple.get(),
-            trade_complex=self.trade_complex.get(),
+            trade_shares=bool(share_keys.intersection(allowed_transactions)),
+            trade_simple=bool(simple_keys.intersection(allowed_transactions)),
+            trade_complex=bool(complex_keys.intersection(allowed_transactions)),
+            allowed_transactions=allowed_transactions,
             strategies=strategies,
+            strategy_settings=strategy_settings,
             max_position_fraction=max(0.0, _parse_float(self.max_position_pct.get(), 10.0) / 100),
             max_trades_per_day=max(0, _parse_int(self.max_trades_per_day.get(), 3)),
             max_option_contracts=max(0, _parse_int(self.max_option_contracts.get(), 4)),
             min_confidence=min(1.0, max(0.0, _parse_float(self.min_confidence.get(), 0.55))),
         )
+
+
+class ToolTip:
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+
+    def _show(self, _event: object) -> None:
+        if self.tip or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 18
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            self.tip,
+            text=self.text,
+            justify=tk.LEFT,
+            background="#fff7d6",
+            foreground="#1f2937",
+            relief=tk.SOLID,
+            borderwidth=1,
+            padx=8,
+            pady=5,
+            wraplength=360,
+        )
+        label.pack()
+
+    def _hide(self, _event: object) -> None:
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
 
 
 class DesktopApp:
@@ -83,7 +156,7 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} Settings Build - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} Advanced Settings Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -98,14 +171,35 @@ class DesktopApp:
         self.root.after(250, self._drain_queue)
 
     def _build_ui(self) -> None:
+        palette = {
+            "bg": "#edf2f7",
+            "panel": "#f8fafc",
+            "panel_alt": "#eef6ff",
+            "line": "#9fb7d4",
+            "accent": "#1f6feb",
+            "text": "#0f172a",
+            "muted": "#475569",
+            "danger": "#9a1b1b",
+        }
+        self.palette = palette
+        self.root.configure(bg=palette["bg"])
         style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure(".", font=("Segoe UI", 9), background=palette["bg"], foreground=palette["text"])
+        style.configure("TFrame", background=palette["bg"])
+        style.configure("Panel.TFrame", background=palette["panel"])
+        style.configure("Toolbar.TFrame", background="#dceafe")
+        style.configure("TNotebook", background=palette["bg"], borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(12, 6), background="#dbeafe")
+        style.map("TNotebook.Tab", background=[("selected", "#ffffff")])
+        style.configure("Accent.TButton", background=palette["accent"], foreground="#ffffff")
         style.configure("Header.TLabel", font=("Segoe UI", 15, "bold"))
-        style.configure("Subtle.TLabel", foreground="#555555")
-        style.configure("Danger.TLabel", foreground="#9a1b1b")
+        style.configure("Subtle.TLabel", foreground=palette["muted"])
+        style.configure("Danger.TLabel", foreground=palette["danger"])
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__} Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} Advanced Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -117,7 +211,7 @@ class DesktopApp:
         ).pack(side=tk.LEFT, padx=(18, 0))
         ttk.Label(header, text="PAPER MODE", style="Danger.TLabel").pack(side=tk.RIGHT)
 
-        top = ttk.Frame(self.root, padding=10)
+        top = ttk.Frame(self.root, padding=10, style="Toolbar.TFrame")
         top.pack(fill=tk.X)
 
         ttk.Label(top, text="Bot Mode").pack(side=tk.LEFT)
@@ -188,7 +282,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            f"zTrade v{__version__} Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} Advanced Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -225,7 +319,7 @@ class DesktopApp:
         self._build_settings_tab(settings_tab)
         if not self.has_saved_settings:
             self.notebook.select(settings_tab)
-            self.status_var.set("Settings Build loaded. Configure tickers, then click Save + Apply.")
+            self.status_var.set("Advanced Settings Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -295,20 +389,22 @@ class DesktopApp:
         self.root.after(250, self._drain_queue)
 
     def _build_settings_tab(self, parent: ttk.Frame) -> None:
-        toolbar = ttk.Frame(parent, padding=10)
+        toolbar = ttk.Frame(parent, padding=10, style="Toolbar.TFrame")
         toolbar.pack(fill=tk.X)
-        ttk.Button(toolbar, text="Add Ticker Row", command=self._add_settings_row).pack(side=tk.LEFT)
-        ttk.Button(toolbar, text="Save + Apply", command=self._save_settings).pack(side=tk.LEFT, padx=8)
+        ttk.Button(toolbar, text="Add Ticker Row", command=self._add_settings_row, style="Accent.TButton").pack(side=tk.LEFT)
+        ttk.Button(toolbar, text="Save + Apply", command=self._save_settings, style="Accent.TButton").pack(side=tk.LEFT, padx=8)
         ttk.Button(toolbar, text="Reset Defaults", command=self._reset_settings_defaults).pack(side=tk.LEFT)
+        self.settings_status_var = tk.StringVar(value=f"{len(self.trading_settings.tickers)} ticker rows loaded")
         ttk.Label(
             toolbar,
             text="Settings control which symbols and strategies feed the recommendations page.",
             style="Subtle.TLabel",
         ).pack(side=tk.LEFT, padx=(18, 0))
+        ttk.Label(toolbar, textvariable=self.settings_status_var, style="Subtle.TLabel").pack(side=tk.RIGHT)
 
-        self.settings_canvas = tk.Canvas(parent, highlightthickness=0)
+        self.settings_canvas = tk.Canvas(parent, highlightthickness=0, background=self.palette["bg"])
         scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.settings_canvas.yview)
-        self.settings_frame = ttk.Frame(self.settings_canvas, padding=(10, 0, 10, 10))
+        self.settings_frame = ttk.Frame(self.settings_canvas, padding=(10, 10, 10, 10))
         self.settings_frame.bind(
             "<Configure>",
             lambda _event: self.settings_canvas.configure(scrollregion=self.settings_canvas.bbox("all")),
@@ -324,23 +420,10 @@ class DesktopApp:
         for child in self.settings_frame.winfo_children():
             child.destroy()
         self.settings_rows = []
-        headers = (
-            "On",
-            "Ticker",
-            "Shares",
-            "Simple",
-            "Complex",
-            *STRATEGY_LABELS.values(),
-            "Max %",
-            "Trades",
-            "Contracts",
-            "Min Conf",
-            "",
-        )
-        for column, header in enumerate(headers):
-            ttk.Label(self.settings_frame, text=header).grid(row=0, column=column, sticky=tk.W, padx=4, pady=(0, 6))
         for settings_row in settings.tickers:
             self._add_settings_row(settings_row)
+        if hasattr(self, "settings_status_var"):
+            self.settings_status_var.set(f"{len(self.settings_rows)} ticker rows loaded")
 
     def _add_settings_row(self, settings: TickerTradeSettings | None = None) -> None:
         self._settings_row_id += 1
@@ -349,28 +432,96 @@ class DesktopApp:
             settings or TickerTradeSettings(symbol=""),
         )
         self.settings_rows.append(row_widgets)
-        row_index = len(self.settings_rows)
-        ttk.Checkbutton(self.settings_frame, variable=row_widgets.enabled).grid(row=row_index, column=0, padx=4, pady=3)
-        ttk.Entry(self.settings_frame, textvariable=row_widgets.symbol, width=8).grid(row=row_index, column=1, padx=4, pady=3)
-        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_shares).grid(row=row_index, column=2, padx=4)
-        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_simple).grid(row=row_index, column=3, padx=4)
-        ttk.Checkbutton(self.settings_frame, variable=row_widgets.trade_complex).grid(row=row_index, column=4, padx=4)
-        strategy_start = 5
-        for offset, strategy in enumerate(STRATEGY_LABELS):
-            ttk.Checkbutton(
-                self.settings_frame,
-                variable=row_widgets.strategy_vars[strategy],
-            ).grid(row=row_index, column=strategy_start + offset, padx=4)
-        limit_start = strategy_start + len(STRATEGY_LABELS)
-        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_position_pct, width=7).grid(row=row_index, column=limit_start, padx=4)
-        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_trades_per_day, width=6).grid(row=row_index, column=limit_start + 1, padx=4)
-        ttk.Entry(self.settings_frame, textvariable=row_widgets.max_option_contracts, width=8).grid(row=row_index, column=limit_start + 2, padx=4)
-        ttk.Entry(self.settings_frame, textvariable=row_widgets.min_confidence, width=8).grid(row=row_index, column=limit_start + 3, padx=4)
-        ttk.Button(
+        card = tk.Frame(
             self.settings_frame,
-            text="Delete",
-            command=lambda target=row_widgets: self._delete_settings_row(target),
-        ).grid(row=row_index, column=limit_start + 4, padx=4)
+            background=self.palette["panel"],
+            highlightbackground=self.palette["line"],
+            highlightthickness=1,
+            padx=10,
+            pady=8,
+        )
+        card.pack(fill=tk.X, pady=(0, 12))
+
+        top = tk.Frame(card, background=self.palette["panel"])
+        top.pack(fill=tk.X)
+        tk.Checkbutton(top, text="Enabled", variable=row_widgets.enabled, background=self.palette["panel"]).pack(side=tk.LEFT)
+        tk.Label(top, text="Ticker", background=self.palette["panel"], foreground=self.palette["text"], font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(14, 4))
+        tk.Entry(top, textvariable=row_widgets.symbol, width=10).pack(side=tk.LEFT)
+        tk.Button(top, text="Delete Row", command=lambda target=row_widgets: self._delete_settings_row(target)).pack(side=tk.RIGHT)
+
+        limits = tk.Frame(card, background=self.palette["panel"])
+        limits.pack(fill=tk.X, pady=(8, 4))
+        self._field(limits, "Max position %", row_widgets.max_position_pct, "Maximum account-equity percentage this ticker may use per recommendation.").pack(side=tk.LEFT, padx=(0, 12))
+        self._field(limits, "Max trades/day", row_widgets.max_trades_per_day, "Maximum recommendations allowed for this ticker per day in this app session.").pack(side=tk.LEFT, padx=(0, 12))
+        self._field(limits, "Max contracts", row_widgets.max_option_contracts, "Maximum option contracts allowed for this ticker recommendation.").pack(side=tk.LEFT, padx=(0, 12))
+        self._field(limits, "Min confidence", row_widgets.min_confidence, "Ticker-level minimum confidence required before a recommendation reaches the main page.").pack(side=tk.LEFT)
+
+        transactions = tk.Frame(card, background=self.palette["panel"])
+        transactions.pack(fill=tk.X, pady=(8, 4))
+        for group, items in TRANSACTION_GROUPS.items():
+            group_frame = tk.LabelFrame(
+                transactions,
+                text=group,
+                background=self.palette["panel_alt"],
+                foreground=self.palette["text"],
+                padx=8,
+                pady=5,
+                labelanchor="n",
+            )
+            group_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+            for item in items:
+                check = tk.Checkbutton(
+                    group_frame,
+                    text=item.label,
+                    variable=row_widgets.transaction_vars[item.key],
+                    background=self.palette["panel_alt"],
+                    activebackground=self.palette["panel_alt"],
+                    anchor="w",
+                )
+                check.pack(fill=tk.X, anchor=tk.W)
+                ToolTip(check, item.description)
+
+        strategies = tk.LabelFrame(
+            card,
+            text="Strategy Settings",
+            background=self.palette["panel"],
+            foreground=self.palette["text"],
+            padx=8,
+            pady=6,
+        )
+        strategies.pack(fill=tk.X, pady=(8, 0))
+        for index, (strategy, label) in enumerate(STRATEGY_LABELS.items()):
+            row = index // 3
+            column = index % 3
+            strategy_card = tk.Frame(strategies, background="#ffffff", highlightbackground="#d1d5db", highlightthickness=1, padx=6, pady=5)
+            strategy_card.grid(row=row, column=column, sticky=tk.EW, padx=4, pady=4)
+            strategies.grid_columnconfigure(column, weight=1)
+            check = tk.Checkbutton(
+                strategy_card,
+                text=label,
+                variable=row_widgets.strategy_vars[strategy],
+                background="#ffffff",
+                activebackground="#ffffff",
+                font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            )
+            check.grid(row=0, column=0, columnspan=6, sticky=tk.W)
+            ToolTip(check, STRATEGY_DESCRIPTIONS.get(strategy, ""))
+            self._mini_field(strategy_card, "Min", row_widgets.strategy_min_confidence[strategy], 1)
+            self._mini_field(strategy_card, "Max%", row_widgets.strategy_position_pct[strategy], 2)
+            self._mini_field(strategy_card, "Trades", row_widgets.strategy_max_trades[strategy], 3)
+
+    def _field(self, parent: tk.Widget, label: str, variable: tk.StringVar, tooltip: str) -> tk.Frame:
+        frame = tk.Frame(parent, background=self.palette["panel"])
+        label_widget = tk.Label(frame, text=label, background=self.palette["panel"], foreground=self.palette["muted"])
+        label_widget.pack(anchor=tk.W)
+        ToolTip(label_widget, tooltip)
+        tk.Entry(frame, textvariable=variable, width=10).pack(anchor=tk.W)
+        return frame
+
+    def _mini_field(self, parent: tk.Widget, label: str, variable: tk.StringVar, column: int) -> None:
+        tk.Label(parent, text=label, background="#ffffff", foreground=self.palette["muted"]).grid(row=1, column=(column - 1) * 2, sticky=tk.W, padx=(0, 3))
+        tk.Entry(parent, textvariable=variable, width=6).grid(row=1, column=(column - 1) * 2 + 1, sticky=tk.W, padx=(0, 8))
 
     def _delete_settings_row(self, target: SettingsRowWidgets) -> None:
         settings = TradingSettings(

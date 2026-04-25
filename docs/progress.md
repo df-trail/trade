@@ -45,3 +45,4 @@ This file records autonomous build progress so overnight or long-running work le
 - Added persistent desktop settings in `data/settings.json` with add/delete ticker rows, instrument checkboxes, strategy checkboxes, and trade-limit fields.
 - Wired settings into the desktop feed so enabled tickers and selected strategies are the only inputs reaching the recommendations page.
 - Bumped the visible desktop version to `zTrade v0.3.0 Settings Build` and added a top-bar Open Settings button.
+- Expanded settings into `zTrade v0.4.0 Advanced Settings Build` with separated share/simple-option/complex-option transaction groups, 26 strategy hover descriptions, and per-strategy min confidence/max position/max trades settings.

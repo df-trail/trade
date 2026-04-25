@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.3.0 Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.4.0 Advanced Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -247,14 +247,49 @@ Each ticker row supports:
 
 - ticker symbol
 - enabled/disabled toggle
-- shares, simple trades, and complex trades checkboxes
-- strategy checkboxes for News, Breakout, VWAP, RSI, and Flow
+- visually separated transaction groups:
+  - share trades: long shares, short shares
+  - simple options: long call, long put, covered call, cash-secured put
+  - complex options: straddle, strangle, bull call spread, bear put spread, iron condor, calendar spread
+- 26 strategy checkboxes with hover descriptions:
+  - News
+  - Breakout
+  - VWAP Reclaim
+  - RSI Revert
+  - Options Flow
+  - Gap Continue
+  - Opening Range
+  - EMA Trend
+  - ATR Breakout
+  - Squeeze
+  - Support Bounce
+  - Sweep Reversal
+  - Earnings Drift
+  - Regime Trend
+  - IV Expansion
+  - Volume Spike
+  - VWAP Pullback
+  - Trend Pullback
+  - High Tight Flag
+  - VDU Breakout
+  - Engulfing
+  - MA Bounce
+  - MTF Momentum
+  - News Dip Buy
+  - Put Flow
+  - VWAP Failure
+- per-strategy settings:
+  - minimum confidence
+  - max position %
+  - max trades per day
 - max position percent
 - max trades per day setting
 - max option contracts
 - minimum confidence
 
 Click `Save + Apply` to persist settings to `data/settings.json`, restart the feed with only enabled tickers, and clear old recommendations from the main page.
+
+Current implemented strategy plugins are intentionally directional and paper-trading first. Some transaction permissions, especially complex options, are captured in settings before the execution engine supports them so those workflows can be added behind explicit controls instead of hidden defaults.
 
 CSV backtests can use `CsvReplayDataProvider`. Required columns:
 
@@ -293,7 +328,8 @@ python -m compileall src tests scripts
 1. Wire option-chain selection into live provider workflows.
 2. Add websocket providers for lower-latency stock/news/options feeds.
 3. Add richer paper-trading fill models, slippage modes, and fee assumptions.
-4. Add account/PDT day-trade tracking.
+4. Add persistent account/PDT day-trade tracking.
 5. Add daily performance reports and strategy analytics.
-6. Harden desktop UI trade review workflows.
-7. Add IBKR broker integration only after paper-trading performance and API/legal constraints are settled.
+6. Add execution support for enabled complex-option structures.
+7. Harden desktop UI trade review workflows.
+8. Add IBKR broker integration only after paper-trading performance and API/legal constraints are settled.

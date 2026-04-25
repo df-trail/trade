@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 from ztrade.config import GuardrailConfig
-from ztrade.models import AssetClass, GuardrailDecision, OrderSide, Recommendation, TradeIdea
-from ztrade.settings import RecommendationSettingsPolicy, SettingsStore, TickerTradeSettings, TradingSettings
+from ztrade.models import AssetClass, GuardrailDecision, OptionContract, OrderSide, Recommendation, TradeIdea
+from ztrade.settings import RecommendationSettingsPolicy, SettingsStore, StrategySettings, TickerTradeSettings, TradingSettings
 
 
 class SettingsTests(unittest.TestCase):
@@ -56,12 +56,48 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNotNone(policy.apply(_recommendation("news_momentum")))
         self.assertIsNone(policy.apply(_recommendation("news_momentum")))
 
+    def test_policy_filters_disabled_option_transaction(self) -> None:
+        settings = TradingSettings(
+            tickers=(TickerTradeSettings(symbol="AAPL", allowed_transactions=("long_shares",)),)
+        )
+        recommendation = _recommendation("news_momentum", asset_class=AssetClass.OPTION, option_type="call")
+        self.assertIsNone(RecommendationSettingsPolicy(settings, GuardrailConfig()).apply(recommendation))
 
-def _recommendation(strategy: str, adjusted_quantity: int | None = None) -> Recommendation:
+    def test_policy_uses_strategy_specific_confidence(self) -> None:
+        settings = TradingSettings(
+            tickers=(
+                TickerTradeSettings(
+                    symbol="AAPL",
+                    strategy_settings={
+                        "news_momentum": StrategySettings(enabled=True, min_confidence=0.90),
+                    },
+                ),
+            )
+        )
+        self.assertIsNone(RecommendationSettingsPolicy(settings, GuardrailConfig()).apply(_recommendation("news_momentum")))
+
+
+def _recommendation(
+    strategy: str,
+    adjusted_quantity: int | None = None,
+    asset_class: AssetClass = AssetClass.STOCK,
+    option_type: str = "call",
+) -> Recommendation:
+    option_contract = None
+    symbol = "AAPL"
+    if asset_class == AssetClass.OPTION:
+        option_contract = OptionContract(
+            underlying="AAPL",
+            expiration="2026-05-15",
+            strike=200,
+            option_type=option_type,
+            symbol=f"AAPL-20260515-{option_type.upper()}-200",
+        )
+        symbol = option_contract.symbol
     return Recommendation(
         idea=TradeIdea(
-            symbol="AAPL",
-            asset_class=AssetClass.STOCK,
+            symbol=symbol,
+            asset_class=asset_class,
             side=OrderSide.BUY,
             quantity=1,
             limit_price=100.0,
@@ -69,6 +105,7 @@ def _recommendation(strategy: str, adjusted_quantity: int | None = None) -> Reco
             strategy=strategy,
             thesis="test",
             ta_summary="test",
+            option_contract=option_contract,
         ),
         guardrail_decision=GuardrailDecision(accepted=True, adjusted_quantity=adjusted_quantity),
     )
