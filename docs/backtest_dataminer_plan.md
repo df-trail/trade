@@ -2,6 +2,8 @@
 
 This document is the working plan for turning zTrade into an exhaustive research environment for testing ticker-specific strategy setups, then promoting validated setups into paper and eventually live IBKR trading.
 
+Related planning document: `docs/exhaust_backtest_model.md` translates the local `docs/trade_strategies.pdf` strategy taxonomy into the concrete Exhaust candidate model, search dimensions, validation rules, and implementation phases.
+
 ## Goal
 
 Build two linked research tools:
@@ -571,4 +573,3 @@ The next concrete implementation slice should be:
 8. Add metrics summary and trade ledger.
 
 This gives the app a useful visual backtesting surface before adding the heavier dataminer batch engine.
-
