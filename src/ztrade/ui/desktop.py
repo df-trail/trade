@@ -65,6 +65,7 @@ class DesktopApp:
         load_env_file()
         self.config = AppConfig(bot_mode=BotMode.STAGE_ONLY)
         self.settings_store = SettingsStore()
+        self.has_saved_settings = self.settings_store.path.exists()
         self.trading_settings = self.settings_store.load(self.config.default_watchlist)
         self._apply_settings_to_config()
         self.store = TradingStore(self.config.database_path)
@@ -82,7 +83,7 @@ class DesktopApp:
         self.feed_paused = False
 
         self.root = tk.Tk()
-        self.root.title(f"zTrade v{__version__} - Paper Trading Workstation")
+        self.root.title(f"zTrade v{__version__} Settings Build - Paper Trading Workstation")
         self.root.geometry("1280x760")
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -104,7 +105,7 @@ class DesktopApp:
 
         header = ttk.Frame(self.root, padding=(12, 10, 12, 4))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=f"zTrade v{__version__}", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text=f"zTrade v{__version__} Settings Build", style="Header.TLabel").pack(side=tk.LEFT)
         ttk.Label(
             header,
             text=(
@@ -132,20 +133,22 @@ class DesktopApp:
 
         self.pause_button = ttk.Button(top, text="Pause Feed", command=self._toggle_feed)
         self.pause_button.pack(side=tk.LEFT, padx=(0, 18))
+        self.open_settings_button = ttk.Button(top, text="Open Settings", command=self._open_settings_tab)
+        self.open_settings_button.pack(side=tk.LEFT, padx=(0, 18))
 
         ttk.Label(top, textvariable=self.status_var).pack(side=tk.LEFT)
 
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        recommendations_tab = ttk.Frame(notebook)
-        account_tab = ttk.Frame(notebook)
-        audit_tab = ttk.Frame(notebook)
-        settings_tab = ttk.Frame(notebook)
-        notebook.add(recommendations_tab, text="Recommendations + Trade Review")
-        notebook.add(account_tab, text="Paper Account + Positions")
-        notebook.add(audit_tab, text="SQLite Audit Log")
-        notebook.add(settings_tab, text="Settings")
+        recommendations_tab = ttk.Frame(self.notebook)
+        account_tab = ttk.Frame(self.notebook)
+        audit_tab = ttk.Frame(self.notebook)
+        settings_tab = ttk.Frame(self.notebook)
+        self.notebook.add(recommendations_tab, text="Recommendations + Trade Review")
+        self.notebook.add(account_tab, text="Paper Account + Positions")
+        self.notebook.add(audit_tab, text="SQLite Audit Log")
+        self.notebook.add(settings_tab, text="Settings")
 
         columns = (
             "status",
@@ -185,7 +188,7 @@ class DesktopApp:
         self.details.pack(fill=tk.X, pady=(8, 0))
         self.details.insert(
             "1.0",
-            "zTrade v0.2 desktop loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
+            f"zTrade v{__version__} Settings Build loaded. Select a recommendation to inspect thesis, guardrails, and trade plan.",
         )
         self.details.configure(state=tk.DISABLED)
 
@@ -220,6 +223,9 @@ class DesktopApp:
         self.audit_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
         self._build_settings_tab(settings_tab)
+        if not self.has_saved_settings:
+            self.notebook.select(settings_tab)
+            self.status_var.set("Settings Build loaded. Configure tickers, then click Save + Apply.")
 
         actions = ttk.Frame(self.root, padding=10)
         actions.pack(fill=tk.X)
@@ -438,6 +444,10 @@ class DesktopApp:
             return
         self.pause_button.configure(text="Pause Feed")
         self.status_var.set("Feed resumed.")
+
+    def _open_settings_tab(self) -> None:
+        self.notebook.select(3)
+        self.status_var.set("Settings tab open. Changes affect the recommendation feed after Save + Apply.")
 
     def _approve_selected(self) -> None:
         selected = self.tree.selection()

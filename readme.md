@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.2.0` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.3.0 Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
