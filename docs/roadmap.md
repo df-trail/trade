@@ -17,6 +17,7 @@ This file tracks important items that are not finished yet.
 - Add market-regime filters that can reduce confidence or block trades.
 - Add per-strategy backtest summaries inside the desktop UI.
 - Add settings import/export profiles.
+- Build the Backtest Workbench and Strategy Dataminer described in `docs/backtest_dataminer_plan.md`.
 
 ## Paper Trading
 
