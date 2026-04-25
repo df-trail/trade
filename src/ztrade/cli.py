@@ -5,7 +5,7 @@ import asyncio
 import sqlite3
 from pathlib import Path
 
-from ztrade.backtest.engine import BacktestConfig, BacktestEngine
+from ztrade.backtest.engine import BacktestConfig, BacktestEngine, relax_guardrails_for_backtest
 from ztrade.brokers.paper import PaperBroker
 from ztrade.config import AppConfig, BotMode, DataProviderKind
 from ztrade.data.factory import create_data_provider
@@ -118,6 +118,7 @@ async def _backtest_csv(path: str, snapshots: int | None, max_hold: int) -> None
 
 
 async def _run_backtest(config: AppConfig, max_snapshots: int | None, max_hold: int) -> None:
+    relax_guardrails_for_backtest(config)
     guardrails = GuardrailEngine(config.guardrails)
     broker = PaperBroker(config.guardrails.account_equity)
     recommender = RecommendationEngine(default_strategies(), guardrails)

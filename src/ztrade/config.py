@@ -15,6 +15,8 @@ class DataProviderKind(StrEnum):
     DEMO = "demo"
     CSV_REPLAY = "csv_replay"
     POLYGON_SNAPSHOT = "polygon_snapshot"
+    IBKR_SNAPSHOT = "ibkr_snapshot"
+    IBKR_HISTORICAL = "ibkr_historical"
 
 
 @dataclass(slots=True)
@@ -67,3 +69,10 @@ class AppConfig:
     tradier_token_env: str = "TRADIER_TOKEN"
     live_poll_interval_seconds: float = 1.0
     enable_finnhub_news: bool = True
+    ibkr_historical_duration: str = "2 D"
+    ibkr_historical_bar_size: str = "5 mins"
+    ibkr_historical_what_to_show: str = "TRADES"
+    ibkr_use_rth: bool = True
+    ibkr_market_data_type: int = 3
+    ibkr_history_timeout_seconds: float = 20.0
+    ibkr_quote_timeout_seconds: float = 8.0

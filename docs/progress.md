@@ -49,3 +49,4 @@ This file records autonomous build progress so overnight or long-running work le
 - Added `zTrade v0.4.1 Collapsible Settings Build` so ticker settings roll up into compact rows with per-row expand/collapse plus Expand All and Collapse All controls.
 - Added `zTrade v0.4.2 IBKR Health Build` with an Account-tab `Check IBKR` action that tests the configured local TWS/IB Gateway socket while keeping zTrade on paper execution.
 - Added `zTrade v0.4.3 Backtest Settings Build` with a Settings-tab backtest panel that runs checked ticker rows independently through the existing backtest engine and settings policy.
+- Added `zTrade v0.4.4 IBKR Data Build` with individual ticker-row backtest buttons, `ibkr_historical` backtest source, and `ibkr_snapshot` read-only recommendation feed source.

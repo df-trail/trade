@@ -223,3 +223,11 @@ def _trade_record(open_trade: OpenTrade, exit_fill: Fill, exit_reason: str) -> T
         pnl_pct=round(pnl_pct, 3),
         exit_reason=exit_reason,
     )
+
+
+def relax_guardrails_for_backtest(config: AppConfig) -> None:
+    config.guardrails.max_quote_age_ms = 10 * 365 * 24 * 60 * 60 * 1000
+    config.guardrails.min_stock_volume = 0
+    config.guardrails.min_relative_volume = 0.0
+    config.guardrails.min_option_volume = 0
+    config.guardrails.min_option_open_interest = 0

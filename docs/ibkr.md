@@ -27,7 +27,13 @@ For market data, complete the Market Data API acknowledgement in Client Portal a
 
 zTrade does not need your login credentials. The `.env` file should only hold connection settings such as account id, host, port, client id, and the live-trading kill switch.
 
-Current zTrade status: the app still defaults to `PaperBroker`. The desktop account tab now has a `Check IBKR` button that validates whether the local API socket is reachable. The next IBKR implementation step is a read-only pricing provider, followed by contract lookup, paper order preview, and paper order placement.
+Current zTrade status: the app still defaults to `PaperBroker`. The desktop account tab has a `Check IBKR` button that validates whether the local API socket is reachable. The desktop toolbar can use `ibkr_snapshot` for read-only quote/bar recommendation feeds, and the Settings backtest panel can use `ibkr_historical` for individual ticker-row backtests. The next IBKR implementation steps are option-chain contract lookup, richer chart display, paper order preview, and paper order placement.
+
+The read-only data provider requires the Python TWS API package:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install ibapi
+```
 
 ## Candidate API Paths
 
@@ -51,6 +57,7 @@ Current zTrade status: the app still defaults to `PaperBroker`. The desktop acco
    - account lookup
    - contract lookup for stocks and single-leg options
    - quote/market-data entitlement check
+   - read-only stock quote and historical-bar provider
    - paper order preview
    - paper order placement
    - order status/fill reconciliation

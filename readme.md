@@ -198,7 +198,7 @@ cd C:\zTrade
 .\launch_ztrade.cmd
 ```
 
-The current desktop build shows `zTrade v0.4.3 Backtest Settings Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
+The current desktop build shows `zTrade v0.4.4 IBKR Data Build` in the window title and header. If you do not see that, close the old zTrade window and relaunch from `C:\zTrade\launch_ztrade.cmd`.
 
 CLI demo:
 
@@ -250,13 +250,19 @@ The Account tab includes `Check IBKR`, which tests whether zTrade can reach the 
 
 If TWS shows socket port `7496`, set `IBKR_PORT=7496` locally for read-only pricing checks or switch to the paper TWS session/port before order testing. Keep `IBKR_LIVE_TRADING_ENABLED=false`. zTrade does not need an IBKR username or password; log in through TWS or IB Gateway.
 
+`ibkr_snapshot` is available as a read-only recommendation feed source from the desktop toolbar. It requests IBKR stock quote snapshots plus recent historical bars for strategy context.
+
+`ibkr_historical` is available as a Settings backtest source. It requests IBKR historical stock bars for the individual ticker row you choose and replays those bars through that row's strategy and limit settings.
+
+The IBKR data providers require the Python TWS API package. It is included in the `feeds` extra and can be installed into the local virtual environment with `.\.venv\Scripts\python.exe -m pip install ibapi`.
+
 ## Desktop Settings
 
 The desktop Settings tab is the source of truth for what feeds the recommendations page.
 
 Ticker rows open as compact rollups so the page can show only enabled status, ticker, transaction count, strategy count, and major limits. Use `Expand`, `Collapse`, `Expand All`, and `Collapse All` to expose or hide the deeper transaction and strategy settings.
 
-The Settings tab also includes `Backtest Settings Rows`. Check the `Backtest` box on each ticker row you want to test, choose `demo` or `csv_replay`, set snapshot/max-hold limits, and click `Backtest Checked Rows`. The backtest runs each checked ticker setup separately and applies the same ticker, transaction, strategy, confidence, and sizing settings used by the recommendation feed.
+The Settings tab also includes `Backtest Individual Tickers`. Choose `demo`, `csv_replay`, or `ibkr_historical`, set snapshot/max-hold limits, then click the `Backtest` button on the ticker row you want to test. The backtest runs that ticker setup by itself and applies the same ticker, transaction, strategy, confidence, and sizing settings used by the recommendation feed.
 
 Each ticker row supports:
 
